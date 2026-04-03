@@ -4,6 +4,8 @@ import 'package:supabase_flutter/supabase_flutter.dart';
 
 import 'supabase_config.dart';
 
+const String kBuildStamp = '2026-04-03T19:45:00+05:30';
+
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
   await Supabase.initialize(
@@ -781,6 +783,14 @@ class _DashboardScreenState extends State<DashboardScreen> {
                             style: Theme.of(context)
                                 .textTheme
                                 .bodyMedium
+                                ?.copyWith(color: const Color(0xFF1C3B2E)),
+                          ),
+                          const SizedBox(height: 6),
+                          Text(
+                            'Build: $kBuildStamp',
+                            style: Theme.of(context)
+                                .textTheme
+                                .labelSmall
                                 ?.copyWith(color: const Color(0xFF1C3B2E)),
                           ),
                         ],
