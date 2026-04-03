@@ -32,7 +32,10 @@ flutter_*.log
 .flutter-plugins-dependencies
 .pub-cache/
 .pub/
-/build/
+# Keep build outputs ignored, but allow web build for Pages deploy
+/build/**
+!build/web/
+!build/web/**
 /coverage/
 
 # Symbolication related

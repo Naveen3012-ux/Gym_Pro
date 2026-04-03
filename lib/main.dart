@@ -2,18 +2,21 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
-import 'package:postgres/postgres.dart';
+import 'package:supabase_flutter/supabase_flutter.dart';
 
-void main() async {
+import 'supabase_config.dart';
+
+Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
-  final databaseService = DatabaseService();
-  runApp(GymProApp(databaseService: databaseService));
+  await Supabase.initialize(
+    url: supabaseUrl,
+    anonKey: supabaseAnonKey,
+  );
+  runApp(const GymProApp());
 }
 
 class GymProApp extends StatelessWidget {
-  const GymProApp({super.key, required this.databaseService});
-
-  final DatabaseService databaseService;
+  const GymProApp({super.key});
 
   @override
   Widget build(BuildContext context) {
@@ -52,241 +55,95 @@ class GymProApp extends StatelessWidget {
           ),
         ),
       ),
-      home: AppBootstrap(databaseService: databaseService),
+      home: const LoginScreen(),
     );
   }
 }
 
-class AppBootstrap extends StatelessWidget {
-  const AppBootstrap({super.key, required this.databaseService});
+class SupabaseService {
+  SupabaseClient get _client => Supabase.instance.client;
 
-  final DatabaseService databaseService;
-
-  @override
-  Widget build(BuildContext context) {
-    return FutureBuilder<void>(
-      future: databaseService.init(),
-      builder: (context, snapshot) {
-        if (snapshot.connectionState == ConnectionState.waiting) {
-          return const Scaffold(
-            body: Center(child: CircularProgressIndicator()),
-          );
-        }
-        if (snapshot.hasError) {
-          return Scaffold(
-            body: Center(
-              child: Padding(
-                padding: const EdgeInsets.all(24),
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    const Icon(Icons.error_outline, size: 48),
-                    const SizedBox(height: 12),
-                    Text(
-                      'Database connection failed.',
-                      style: Theme.of(context).textTheme.headlineMedium,
-                      textAlign: TextAlign.center,
-                    ),
-                    const SizedBox(height: 8),
-                    Text(
-                      snapshot.error.toString(),
-                      style: Theme.of(context)
-                          .textTheme
-                          .bodyMedium
-                          ?.copyWith(color: Colors.black54),
-                      textAlign: TextAlign.center,
-                    ),
-                  ],
+  Stream<List<Member>> watchMembers() {
+    return _client
+        .from('members')
+        .stream(primaryKey: ['id'])
+        .order('name')
+        .map(
+          (rows) => rows
+              .map(
+                (row) => Member(
+                  id: row['id'] as String,
+                  name: row['name'] as String,
+                  email: row['email'] as String,
+                  age: row['age'] as int,
+                  paymentAmount: row['payment_amount'] as int,
+                  durationMonths: row['duration_months'] as int,
+                  membershipActive: row['membership_active'] as bool,
                 ),
-              ),
-            ),
-          );
-        }
-        return const LoginScreen();
-      },
-    );
-  }
-}
-
-class DatabaseService {
-  factory DatabaseService() => _instance;
-
-  DatabaseService._internal();
-
-  static final DatabaseService _instance = DatabaseService._internal();
-
-  static const String _host = 'localhost';
-  static const int _port = 5432;
-  static const String _database = 'Gym_Pro_DB';
-  static const String _username = 'naveensharansrinivasan';
-  static const String _password = '1234';
-
-  PostgreSQLConnection? _connection;
-  bool _initialized = false;
-  Timer? _membersTimer;
-  Timer? _attendanceTimer;
-  final StreamController<List<Member>> _membersController =
-      StreamController.broadcast();
-  final StreamController<List<AttendanceLog>> _attendanceController =
-      StreamController.broadcast();
-
-  Future<void> init() async {
-    if (_initialized) return;
-    _connection = PostgreSQLConnection(
-      _host,
-      _port,
-      _database,
-      username: _username,
-      password: _password,
-    );
-    await _connection!.open();
-    await _ensureTables();
-    _initialized = true;
-    await _refreshMembers();
-    await _refreshAttendance();
-    _membersTimer = Timer.periodic(
-      const Duration(seconds: 5),
-      (_) => _refreshMembers(),
-    );
-    _attendanceTimer = Timer.periodic(
-      const Duration(seconds: 5),
-      (_) => _refreshAttendance(),
-    );
+              )
+              .toList(),
+        );
   }
 
-  Future<void> _ensureTables() async {
-    await _connection!.query('''
-      CREATE TABLE IF NOT EXISTS members (
-        id SERIAL PRIMARY KEY,
-        name TEXT NOT NULL,
-        email TEXT UNIQUE NOT NULL,
-        age INTEGER NOT NULL,
-        payment_amount INTEGER NOT NULL,
-        duration_months INTEGER NOT NULL,
-        membership_active BOOLEAN NOT NULL DEFAULT TRUE
-      );
-    ''');
-    await _connection!.query('''
-      CREATE TABLE IF NOT EXISTS attendance (
-        id SERIAL PRIMARY KEY,
-        member_id INTEGER NOT NULL REFERENCES members(id) ON DELETE CASCADE,
-        timestamp TIMESTAMPTZ NOT NULL
-      );
-    ''');
-  }
-
-  Stream<List<Member>> watchMembers() => _membersController.stream;
-  Stream<List<AttendanceLog>> watchRecentAttendance() =>
-      _attendanceController.stream;
-
-  Future<void> _refreshMembers() async {
-    final rows = await _connection!.query('''
-      SELECT id, name, email, age, payment_amount, duration_months, membership_active
-      FROM members
-      ORDER BY name;
-    ''');
-    final members = rows
+  Stream<List<AttendanceLog>> watchRecentAttendance() {
+    return _client
+        .from('attendance')
+        .stream(primaryKey: ['id'])
+        .order('timestamp', ascending: false)
+        .limit(5)
         .map(
-          (row) => Member(
-            id: row[0] as int,
-            name: row[1] as String,
-            email: row[2] as String,
-            age: row[3] as int,
-            paymentAmount: row[4] as int,
-            durationMonths: row[5] as int,
-            membershipActive: row[6] as bool,
-          ),
-        )
-        .toList();
-    _membersController.add(members);
-  }
-
-  Future<void> _refreshAttendance() async {
-    final rows = await _connection!.query('''
-      SELECT a.id, a.member_id, m.name, a.timestamp
-      FROM attendance a
-      JOIN members m ON m.id = a.member_id
-      ORDER BY a.timestamp DESC
-      LIMIT 5;
-    ''');
-    final logs = rows
-        .map(
-          (row) => AttendanceLog(
-            id: row[0] as int,
-            memberId: row[1] as int,
-            memberName: row[2] as String,
-            timestamp: row[3] as DateTime,
-          ),
-        )
-        .toList();
-    _attendanceController.add(logs);
+          (rows) => rows
+              .map(
+                (row) => AttendanceLog(
+                  id: row['id'] as String,
+                  memberId: row['member_id'] as String,
+                  memberName: '',
+                  timestamp: DateTime.parse(row['timestamp'] as String),
+                ),
+              )
+              .toList(),
+        );
   }
 
   Future<void> addMember(MemberInput input) async {
-    await _connection!.query(
-      '''
-      INSERT INTO members (name, email, age, payment_amount, duration_months, membership_active)
-      VALUES (@name, @email, @age, @payment, @duration, @active);
-      ''',
-      substitutionValues: {
-        'name': input.name,
-        'email': input.email,
-        'age': input.age,
-        'payment': input.paymentAmount,
-        'duration': input.durationMonths,
-        'active': input.membershipActive,
-      },
-    );
-    await _refreshMembers();
+    await _client.from('members').insert({
+      'name': input.name,
+      'email': input.email,
+      'age': input.age,
+      'payment_amount': input.paymentAmount,
+      'duration_months': input.durationMonths,
+      'membership_active': input.membershipActive,
+    });
   }
 
   Future<void> addAttendance({
-    required int memberId,
+    required String memberId,
     required DateTime timestamp,
   }) async {
-    await _connection!.query(
-      '''
-      INSERT INTO attendance (member_id, timestamp)
-      VALUES (@memberId, @timestamp);
-      ''',
-      substitutionValues: {
-        'memberId': memberId,
-        'timestamp': timestamp.toUtc(),
-      },
-    );
-    await _refreshAttendance();
+    await _client.from('attendance').insert({
+      'member_id': memberId,
+      'timestamp': timestamp.toUtc().toIso8601String(),
+    });
   }
 
-  Future<List<AttendanceLog>> attendanceForMember(int memberId) async {
-    final rows = await _connection!.query(
-      '''
-      SELECT a.id, a.member_id, m.name, a.timestamp
-      FROM attendance a
-      JOIN members m ON m.id = a.member_id
-      WHERE a.member_id = @memberId
-      ORDER BY a.timestamp DESC
-      LIMIT 20;
-      ''',
-      substitutionValues: {'memberId': memberId},
-    );
+  Future<List<AttendanceLog>> attendanceForMember(String memberId) async {
+    final rows = await _client
+        .from('attendance')
+        .select('id, member_id, timestamp')
+        .eq('member_id', memberId)
+        .order('timestamp', ascending: false)
+        .limit(20);
+
     return rows
         .map(
           (row) => AttendanceLog(
-            id: row[0] as int,
-            memberId: row[1] as int,
-            memberName: row[2] as String,
-            timestamp: row[3] as DateTime,
+            id: row['id'] as String,
+            memberId: row['member_id'] as String,
+            memberName: '',
+            timestamp: DateTime.parse(row['timestamp'] as String),
           ),
         )
         .toList();
-  }
-
-  void dispose() {
-    _membersTimer?.cancel();
-    _attendanceTimer?.cancel();
-    _membersController.close();
-    _attendanceController.close();
-    _connection?.close();
   }
 }
 
@@ -301,7 +158,7 @@ class Member {
     required this.membershipActive,
   });
 
-  final int id;
+  final String id;
   final String name;
   final String email;
   final int age;
@@ -336,8 +193,8 @@ class AttendanceLog {
     required this.timestamp,
   });
 
-  final int id;
-  final int memberId;
+  final String id;
+  final String memberId;
   final String memberName;
   final DateTime timestamp;
 }
@@ -354,6 +211,8 @@ class _LoginScreenState extends State<LoginScreen> {
       TextEditingController(text: 'owner@gympro.com');
   final TextEditingController _passwordController =
       TextEditingController(text: '••••••••');
+  bool _isSigningIn = false;
+  String? _errorText;
 
   @override
   void dispose() {
@@ -431,6 +290,16 @@ class _LoginScreenState extends State<LoginScreen> {
                     obscureText: true,
                     hintText: 'Enter password',
                   ),
+                  if (_errorText != null) ...[
+                    const SizedBox(height: 12),
+                    Text(
+                      _errorText!,
+                      style: Theme.of(context)
+                          .textTheme
+                          .bodyMedium
+                          ?.copyWith(color: const Color(0xFF8A1B1B)),
+                    ),
+                  ],
                   const SizedBox(height: 22),
                   SizedBox(
                     width: double.infinity,
@@ -443,14 +312,61 @@ class _LoginScreenState extends State<LoginScreen> {
                           borderRadius: BorderRadius.circular(16),
                         ),
                       ),
-                      onPressed: () {
-                        Navigator.of(context).pushReplacement(
-                          MaterialPageRoute(
-                            builder: (_) => const DashboardScreen(),
-                          ),
-                        );
-                      },
-                      child: const Text('Enter Dashboard'),
+                      onPressed: _isSigningIn
+                          ? null
+                          : () async {
+                              setState(() {
+                                _isSigningIn = true;
+                                _errorText = null;
+                              });
+                              try {
+                                final response = await Supabase.instance.client
+                                    .auth
+                                    .signInWithPassword(
+                                      email: _emailController.text.trim(),
+                                      password: _passwordController.text,
+                                    );
+                                if (!mounted) return;
+                                if (response.session == null) {
+                                  setState(() {
+                                    _errorText =
+                                        'Login failed. Please check credentials.';
+                                  });
+                                  return;
+                                }
+                                if (!context.mounted) return;
+                                Navigator.of(context).pushReplacement(
+                                  MaterialPageRoute(
+                                    builder: (_) => const DashboardScreen(),
+                                  ),
+                                );
+                              } on AuthException catch (error) {
+                                if (!mounted) return;
+                                setState(() {
+                                  _errorText = error.message;
+                                });
+                              } catch (_) {
+                                if (!mounted) return;
+                                setState(() {
+                                  _errorText =
+                                      'Something went wrong. Please try again.';
+                                });
+                              } finally {
+                                if (mounted) {
+                                  setState(() => _isSigningIn = false);
+                                }
+                              }
+                            },
+                      child: _isSigningIn
+                          ? const SizedBox(
+                              width: 22,
+                              height: 22,
+                              child: CircularProgressIndicator(
+                                strokeWidth: 2.4,
+                                color: Colors.white,
+                              ),
+                            )
+                          : const Text('Enter Dashboard'),
                     ),
                   ),
                 ],
@@ -493,7 +409,7 @@ class DashboardScreen extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final databaseService = DatabaseService();
+    final service = SupabaseService();
     return Scaffold(
       appBar: AppBar(
         elevation: 0,
@@ -518,12 +434,27 @@ class DashboardScreen extends StatelessWidget {
             },
             icon: const Icon(Icons.fingerprint),
           ),
+          IconButton(
+            onPressed: () async {
+              await Supabase.instance.client.auth.signOut();
+              if (context.mounted) {
+                Navigator.of(context).pushAndRemoveUntil(
+                  MaterialPageRoute(builder: (_) => const LoginScreen()),
+                  (_) => false,
+                );
+              }
+            },
+            icon: const Icon(Icons.logout),
+          ),
         ],
       ),
       body: StreamBuilder<List<Member>>(
-        stream: databaseService.watchMembers(),
+        stream: service.watchMembers(),
         builder: (context, memberSnapshot) {
           final members = memberSnapshot.data ?? const <Member>[];
+          final memberNameById = {
+            for (final member in members) member.id: member.name,
+          };
           return ListView(
             padding: const EdgeInsets.fromLTRB(20, 10, 20, 30),
             children: [
@@ -634,7 +565,7 @@ class DashboardScreen extends StatelessWidget {
               ),
               const SizedBox(height: 10),
               StreamBuilder<List<AttendanceLog>>(
-                stream: databaseService.watchRecentAttendance(),
+                stream: service.watchRecentAttendance(),
                 builder: (context, attendanceSnapshot) {
                   final logs = attendanceSnapshot.data ?? const <AttendanceLog>[];
                   if (logs.isEmpty) {
@@ -646,7 +577,18 @@ class DashboardScreen extends StatelessWidget {
                           ?.copyWith(color: Colors.black54),
                     );
                   }
-                  return _AttendanceLogCard(logs: logs);
+                  final resolvedLogs = logs
+                      .map(
+                        (log) => AttendanceLog(
+                          id: log.id,
+                          memberId: log.memberId,
+                          memberName:
+                              memberNameById[log.memberId] ?? 'Member',
+                          timestamp: log.timestamp,
+                        ),
+                      )
+                      .toList();
+                  return _AttendanceLogCard(logs: resolvedLogs);
                 },
               ),
             ],
@@ -675,7 +617,7 @@ class MemberDetailScreen extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final databaseService = DatabaseService();
+    final service = SupabaseService();
     return Scaffold(
       appBar: AppBar(
         backgroundColor: const Color(0xFFF6F2ED),
@@ -759,7 +701,7 @@ class MemberDetailScreen extends StatelessWidget {
                 ),
                 const SizedBox(height: 10),
                 FutureBuilder<List<AttendanceLog>>(
-                  future: databaseService.attendanceForMember(member.id),
+                  future: service.attendanceForMember(member.id),
                   builder: (context, snapshot) {
                     if (snapshot.connectionState == ConnectionState.waiting) {
                       return const Center(
@@ -843,8 +785,8 @@ class _AddMemberScreenState extends State<AddMemberScreen> {
   Future<void> _saveMember() async {
     if (!_formKey.currentState!.validate()) return;
     setState(() => _isSaving = true);
-    final databaseService = DatabaseService();
-    await databaseService.addMember(
+    final service = SupabaseService();
+    await service.addMember(
       MemberInput(
         name: _nameController.text.trim(),
         email: _emailController.text.trim(),
@@ -1018,7 +960,7 @@ class _AttendanceInputScreenState extends State<AttendanceInputScreen> {
       _selectedTime.hour,
       _selectedTime.minute,
     );
-    await DatabaseService().addAttendance(
+    await SupabaseService().addAttendance(
       memberId: _selectedMember!.id,
       timestamp: timestamp,
     );
@@ -1031,7 +973,7 @@ class _AttendanceInputScreenState extends State<AttendanceInputScreen> {
   Future<void> _submitBiometric() async {
     if (_selectedMember == null) return;
     setState(() => _isSaving = true);
-    await DatabaseService().addAttendance(
+    await SupabaseService().addAttendance(
       memberId: _selectedMember!.id,
       timestamp: DateTime.now(),
     );
@@ -1043,7 +985,7 @@ class _AttendanceInputScreenState extends State<AttendanceInputScreen> {
 
   @override
   Widget build(BuildContext context) {
-    final databaseService = DatabaseService();
+    final service = SupabaseService();
     return Scaffold(
       appBar: AppBar(
         backgroundColor: const Color(0xFFF6F2ED),
@@ -1051,7 +993,7 @@ class _AttendanceInputScreenState extends State<AttendanceInputScreen> {
         title: const Text('Attendance Input'),
       ),
       body: StreamBuilder<List<Member>>(
-        stream: databaseService.watchMembers(),
+        stream: service.watchMembers(),
         builder: (context, snapshot) {
           final members = snapshot.data ?? const <Member>[];
           return ListView(
@@ -1072,7 +1014,7 @@ class _AttendanceInputScreenState extends State<AttendanceInputScreen> {
                     ),
                     const SizedBox(height: 10),
                     DropdownButtonFormField<Member>(
-                      key: ValueKey(_selectedMember?.id ?? -1),
+                      key: ValueKey(_selectedMember?.id ?? ''),
                       initialValue: _selectedMember,
                       decoration: InputDecoration(
                         filled: true,
