@@ -1,5 +1,3 @@
-import 'dart:async';
-
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
@@ -145,6 +143,44 @@ class SupabaseService {
         )
         .toList();
   }
+
+  Stream<List<AttendanceLog>> watchAttendanceSince(DateTime since) {
+    return _client
+        .from('attendance')
+        .stream(primaryKey: ['id'])
+        .gte('timestamp', since.toUtc().toIso8601String())
+        .order('timestamp', ascending: true)
+        .map(
+          (rows) => rows
+              .map(
+                (row) => AttendanceLog(
+                  id: row['id'] as String,
+                  memberId: row['member_id'] as String,
+                  memberName: '',
+                  timestamp: DateTime.parse(row['timestamp'] as String),
+                ),
+              )
+              .toList(),
+        );
+  }
+
+  Future<AttendanceLog?> latestAttendanceForMember(String memberId) async {
+    final rows = await _client
+        .from('attendance')
+        .select('id, member_id, timestamp')
+        .eq('member_id', memberId)
+        .order('timestamp', ascending: false)
+        .limit(1);
+
+    if (rows.isEmpty) return null;
+    final row = rows.first;
+    return AttendanceLog(
+      id: row['id'] as String,
+      memberId: row['member_id'] as String,
+      memberName: '',
+      timestamp: DateTime.parse(row['timestamp'] as String),
+    );
+  }
 }
 
 class Member {
@@ -207,10 +243,8 @@ class LoginScreen extends StatefulWidget {
 }
 
 class _LoginScreenState extends State<LoginScreen> {
-  final TextEditingController _emailController =
-      TextEditingController(text: 'owner@gympro.com');
-  final TextEditingController _passwordController =
-      TextEditingController(text: '••••••••');
+  final TextEditingController _emailController = TextEditingController();
+  final TextEditingController _passwordController = TextEditingController();
   bool _isSigningIn = false;
   String? _errorText;
 
@@ -404,8 +438,264 @@ class _LoginScreenState extends State<LoginScreen> {
   }
 }
 
-class DashboardScreen extends StatelessWidget {
+class DashboardScreen extends StatefulWidget {
   const DashboardScreen({super.key});
+
+  @override
+  State<DashboardScreen> createState() => _DashboardScreenState();
+}
+
+class _DashboardScreenState extends State<DashboardScreen> {
+  bool _showMembers = false;
+  final Set<String> _reportFilters = {};
+
+  Future<void> _openAttendanceDialog(
+    List<Member> members,
+    SupabaseService service,
+  ) async {
+    final controller = TextEditingController();
+    Member? selectedMember;
+    bool isSaving = false;
+
+    await showDialog(
+      context: context,
+      builder: (context) {
+        return StatefulBuilder(
+          builder: (context, setDialogState) {
+            final query = controller.text.trim().toLowerCase();
+            final filteredMembers = query.isEmpty
+                ? members
+                : members
+                    .where(
+                      (member) =>
+                          member.name.toLowerCase().contains(query) ||
+                          member.id.toLowerCase().contains(query),
+                    )
+                    .toList();
+
+            Future<void> submitPunch({
+              required bool isPunchIn,
+            }) async {
+              if (selectedMember == null) return;
+              setDialogState(() => isSaving = true);
+              try {
+                DateTime timestamp = DateTime.now();
+                if (!isPunchIn) {
+                  final latest =
+                      await service.latestAttendanceForMember(selectedMember!.id);
+                  if (latest != null) {
+                    final lastLocal = latest.timestamp.toLocal();
+                    final nowLocal = DateTime.now();
+                    final lastDate = DateTime(
+                      lastLocal.year,
+                      lastLocal.month,
+                      lastLocal.day,
+                    );
+                    final nowDate = DateTime(
+                      nowLocal.year,
+                      nowLocal.month,
+                      nowLocal.day,
+                    );
+                    if (nowDate.isAfter(lastDate)) {
+                      timestamp = DateTime(
+                        lastDate.year,
+                        lastDate.month,
+                        lastDate.day,
+                        23,
+                        59,
+                      );
+                    }
+                  }
+                }
+                await service.addAttendance(
+                  memberId: selectedMember!.id,
+                  timestamp: timestamp,
+                );
+                if (!context.mounted) return;
+                if (mounted) {
+                  Navigator.of(context).pop();
+                  ScaffoldMessenger.of(this.context).showSnackBar(
+                    SnackBar(
+                      content: Text(
+                        isPunchIn
+                            ? 'Punch-in saved for ${selectedMember!.name}.'
+                            : 'Punch-out saved for ${selectedMember!.name}.',
+                      ),
+                    ),
+                  );
+                }
+              } on PostgrestException catch (error) {
+                if (!context.mounted) return;
+                if (mounted) {
+                  ScaffoldMessenger.of(this.context).showSnackBar(
+                    SnackBar(content: Text(error.message)),
+                  );
+                }
+              } catch (_) {
+                if (!context.mounted) return;
+                if (mounted) {
+                  ScaffoldMessenger.of(this.context).showSnackBar(
+                    const SnackBar(
+                      content: Text('Failed to save attendance.'),
+                    ),
+                  );
+                }
+              } finally {
+                if (context.mounted && mounted) {
+                  setDialogState(() => isSaving = false);
+                }
+              }
+            }
+
+            return Dialog(
+              insetPadding: const EdgeInsets.all(20),
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(24),
+              ),
+              child: Padding(
+                padding: const EdgeInsets.all(20),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      'Add Attendance',
+                      style: Theme.of(context).textTheme.headlineMedium,
+                    ),
+                    const SizedBox(height: 8),
+                    Text(
+                      'Search by member name or ID and record punch-in/out.',
+                      style: Theme.of(context)
+                          .textTheme
+                          .bodyMedium
+                          ?.copyWith(color: Colors.black54),
+                    ),
+                    const SizedBox(height: 16),
+                    TextField(
+                      controller: controller,
+                      onChanged: (_) => setDialogState(() {}),
+                      decoration: InputDecoration(
+                        hintText: 'Search member',
+                        prefixIcon: const Icon(Icons.search),
+                        filled: true,
+                        fillColor: const Color(0xFFF6F2ED),
+                        border: OutlineInputBorder(
+                          borderRadius: BorderRadius.circular(14),
+                          borderSide: BorderSide.none,
+                        ),
+                      ),
+                    ),
+                    const SizedBox(height: 14),
+                    Container(
+                      constraints: const BoxConstraints(maxHeight: 220),
+                      padding: const EdgeInsets.all(12),
+                      decoration: BoxDecoration(
+                        color: const Color(0xFFFFFBF6),
+                        borderRadius: BorderRadius.circular(16),
+                        border: Border.all(color: const Color(0xFFE5DED7)),
+                      ),
+                      child: filteredMembers.isEmpty
+                          ? Text(
+                              'No members found.',
+                              style: Theme.of(context)
+                                  .textTheme
+                                  .bodyMedium
+                                  ?.copyWith(color: Colors.black54),
+                            )
+                          : ListView.separated(
+                              shrinkWrap: true,
+                              itemBuilder: (context, index) {
+                                final member = filteredMembers[index];
+                                final isSelected = selectedMember?.id == member.id;
+                                return ListTile(
+                                  contentPadding: EdgeInsets.zero,
+                                  onTap: () {
+                                    setDialogState(() {
+                                      selectedMember = member;
+                                    });
+                                  },
+                                  leading: CircleAvatar(
+                                    backgroundColor: isSelected
+                                        ? const Color(0xFF1C3B2E)
+                                        : const Color(0xFFE0A458),
+                                    child: Text(
+                                      member.name.substring(0, 1),
+                                      style: const TextStyle(color: Colors.white),
+                                    ),
+                                  ),
+                                  title: Text(member.name),
+                                  subtitle: Text('ID: ${member.id}'),
+                                  trailing: isSelected
+                                      ? const Icon(
+                                          Icons.check_circle,
+                                          color: Color(0xFF1C3B2E),
+                                        )
+                                      : null,
+                                );
+                              },
+                              separatorBuilder: (_, _) =>
+                                  const Divider(height: 12),
+                              itemCount: filteredMembers.length,
+                            ),
+                    ),
+                    const SizedBox(height: 16),
+                    Row(
+                      children: [
+                        Expanded(
+                          child: OutlinedButton.icon(
+                            style: OutlinedButton.styleFrom(
+                              foregroundColor: const Color(0xFF1C3B2E),
+                              side: const BorderSide(color: Color(0xFF1C3B2E)),
+                              shape: RoundedRectangleBorder(
+                                borderRadius: BorderRadius.circular(14),
+                              ),
+                            ),
+                            onPressed: isSaving
+                                ? null
+                                : selectedMember == null
+                                    ? null
+                                    : () => submitPunch(isPunchIn: true),
+                            icon: const Icon(Icons.fingerprint),
+                            label: const Text('Punch In'),
+                          ),
+                        ),
+                        const SizedBox(width: 12),
+                        Expanded(
+                          child: ElevatedButton.icon(
+                            style: ElevatedButton.styleFrom(
+                              backgroundColor: const Color(0xFF1C3B2E),
+                              foregroundColor: Colors.white,
+                              shape: RoundedRectangleBorder(
+                                borderRadius: BorderRadius.circular(14),
+                              ),
+                            ),
+                            onPressed: isSaving
+                                ? null
+                                : selectedMember == null
+                                    ? null
+                                    : () => submitPunch(isPunchIn: false),
+                            icon: const Icon(Icons.fingerprint_outlined),
+                            label: const Text('Punch Out'),
+                          ),
+                        ),
+                      ],
+                    ),
+                    if (isSaving) ...[
+                      const SizedBox(height: 12),
+                      const LinearProgressIndicator(
+                        color: Color(0xFF1C3B2E),
+                        backgroundColor: Color(0xFFF6F2ED),
+                      ),
+                    ],
+                  ],
+                ),
+              ),
+            );
+          },
+        );
+      },
+    );
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -455,6 +745,10 @@ class DashboardScreen extends StatelessWidget {
           final memberNameById = {
             for (final member in members) member.id: member.name,
           };
+          final totalRevenue = members.fold<int>(
+            0,
+            (sum, member) => sum + member.paymentAmount,
+          );
           return ListView(
             padding: const EdgeInsets.fromLTRB(20, 10, 20, 30),
             children: [
@@ -531,13 +825,185 @@ class DashboardScreen extends StatelessWidget {
                   ),
                 ],
               ),
+              const SizedBox(height: 16),
+              Row(
+                children: [
+                  Expanded(
+                    child: SizedBox(
+                      height: 50,
+                      child: ElevatedButton.icon(
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor: const Color(0xFF1C3B2E),
+                          foregroundColor: Colors.white,
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(14),
+                          ),
+                        ),
+                        onPressed: () {
+                          Navigator.of(context).push(
+                            MaterialPageRoute(
+                              builder: (_) => const AddMemberScreen(),
+                            ),
+                          );
+                        },
+                        icon: const Icon(Icons.person_add_alt),
+                        label: const Text('Add Member'),
+                      ),
+                    ),
+                  ),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: SizedBox(
+                      height: 50,
+                      child: OutlinedButton.icon(
+                        style: OutlinedButton.styleFrom(
+                          foregroundColor: const Color(0xFF1C3B2E),
+                          side: const BorderSide(color: Color(0xFF1C3B2E)),
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(14),
+                          ),
+                        ),
+                        onPressed: () => _openAttendanceDialog(members, service),
+                        icon: const Icon(Icons.fingerprint),
+                        label: const Text('Add Attendance'),
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 20),
+              Text(
+                'Performance Overview',
+                style: Theme.of(context).textTheme.headlineMedium,
+              ),
+              const SizedBox(height: 12),
+              Row(
+                children: [
+                  Expanded(
+                    child: _MetricCard(
+                      label: 'Total Revenue',
+                      value: '₹$totalRevenue',
+                      icon: Icons.payments,
+                    ),
+                  ),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: _MetricCard(
+                      label: 'Total Members',
+                      value: members.length.toString(),
+                      icon: Icons.groups,
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 16),
+              StreamBuilder<List<AttendanceLog>>(
+                stream: service.watchAttendanceSince(
+                  DateTime.now().subtract(const Duration(days: 180)),
+                ),
+                builder: (context, attendanceSnapshot) {
+                  final logs = attendanceSnapshot.data ?? const <AttendanceLog>[];
+                  return _KpiCharts(logs: logs);
+                },
+              ),
+              const SizedBox(height: 18),
+              Text(
+                'Month-End Reports',
+                style: Theme.of(context).textTheme.headlineMedium,
+              ),
+              const SizedBox(height: 10),
+              Wrap(
+                spacing: 10,
+                runSpacing: 8,
+                children: [
+                  _ReportChip(
+                    label: 'By Date',
+                    selected: _reportFilters.contains('date'),
+                    onSelected: (selected) {
+                      setState(() {
+                        selected
+                            ? _reportFilters.add('date')
+                            : _reportFilters.remove('date');
+                      });
+                    },
+                  ),
+                  _ReportChip(
+                    label: 'By Member',
+                    selected: _reportFilters.contains('member'),
+                    onSelected: (selected) {
+                      setState(() {
+                        selected
+                            ? _reportFilters.add('member')
+                            : _reportFilters.remove('member');
+                      });
+                    },
+                  ),
+                  _ReportChip(
+                    label: 'By Amount',
+                    selected: _reportFilters.contains('amount'),
+                    onSelected: (selected) {
+                      setState(() {
+                        selected
+                            ? _reportFilters.add('amount')
+                            : _reportFilters.remove('amount');
+                      });
+                    },
+                  ),
+                ],
+              ),
+              const SizedBox(height: 12),
+              Text(
+                _reportFilters.isEmpty
+                    ? 'Select filters to generate custom month-end reports.'
+                    : 'Filters applied: ${_reportFilters.join(', ')}',
+                style: Theme.of(context)
+                    .textTheme
+                    .bodyMedium
+                    ?.copyWith(color: Colors.black54),
+              ),
               const SizedBox(height: 20),
               Text(
                 'Member List',
                 style: Theme.of(context).textTheme.headlineMedium,
               ),
               const SizedBox(height: 12),
-              if (members.isEmpty)
+              Row(
+                children: [
+                  ElevatedButton(
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: const Color(0xFF1C3B2E),
+                      foregroundColor: Colors.white,
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(14),
+                      ),
+                    ),
+                    onPressed: () {
+                      setState(() => _showMembers = !_showMembers);
+                    },
+                    child: Text(_showMembers ? 'Hide Members' : 'View Members'),
+                  ),
+                  const SizedBox(width: 12),
+                  Text(
+                    _showMembers
+                        ? 'Showing ${members.length} members'
+                        : 'Hidden by default',
+                    style: Theme.of(context)
+                        .textTheme
+                        .bodyMedium
+                        ?.copyWith(color: Colors.black54),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 12),
+              if (!_showMembers)
+                Text(
+                  'Tap "View Members" to display the full member list.',
+                  style: Theme.of(context)
+                      .textTheme
+                      .bodyMedium
+                      ?.copyWith(color: Colors.black54),
+                )
+              else if (members.isEmpty)
                 Text(
                   'No members yet. Add your first member to get started.',
                   style: Theme.of(context)
@@ -768,9 +1234,12 @@ class _AddMemberScreenState extends State<AddMemberScreen> {
   final _emailController = TextEditingController();
   final _ageController = TextEditingController();
   final _paymentController = TextEditingController();
-  final _durationController = TextEditingController();
+  final _customDaysController = TextEditingController();
   bool _membershipActive = true;
   bool _isSaving = false;
+  String? _errorText;
+  int? _selectedDurationMonths;
+  String? _durationErrorText;
 
   @override
   void dispose() {
@@ -778,7 +1247,7 @@ class _AddMemberScreenState extends State<AddMemberScreen> {
     _emailController.dispose();
     _ageController.dispose();
     _paymentController.dispose();
-    _durationController.dispose();
+    _customDaysController.dispose();
     super.dispose();
   }
 
@@ -786,18 +1255,56 @@ class _AddMemberScreenState extends State<AddMemberScreen> {
     if (!_formKey.currentState!.validate()) return;
     setState(() => _isSaving = true);
     final service = SupabaseService();
-    await service.addMember(
-      MemberInput(
-        name: _nameController.text.trim(),
-        email: _emailController.text.trim(),
-        age: int.parse(_ageController.text.trim()),
-        paymentAmount: int.parse(_paymentController.text.trim()),
-        durationMonths: int.parse(_durationController.text.trim()),
-        membershipActive: _membershipActive,
-      ),
-    );
-    if (mounted) {
-      Navigator.of(context).pop();
+    try {
+      final customDaysText = _customDaysController.text.trim();
+      int? durationMonths;
+      String? durationError;
+      if (customDaysText.isNotEmpty) {
+        final days = int.tryParse(customDaysText);
+        if (days == null || days <= 0) {
+          durationError = 'Enter valid custom days';
+        } else {
+          durationMonths = (days / 30).ceil();
+        }
+      } else if (_selectedDurationMonths != null) {
+        durationMonths = _selectedDurationMonths;
+      } else {
+        durationError = 'Select a duration';
+      }
+
+      if (durationError != null) {
+        setState(() {
+          _durationErrorText = durationError;
+          _isSaving = false;
+        });
+        return;
+      }
+
+      await service.addMember(
+        MemberInput(
+          name: _nameController.text.trim(),
+          email: _emailController.text.trim(),
+          age: int.parse(_ageController.text.trim()),
+          paymentAmount: int.parse(_paymentController.text.trim()),
+          durationMonths: durationMonths!,
+          membershipActive: _membershipActive,
+        ),
+      );
+      if (mounted) {
+        Navigator.of(context).pop();
+      }
+    } on PostgrestException catch (error) {
+      setState(() {
+        _errorText = error.message;
+      });
+    } catch (_) {
+      setState(() {
+        _errorText = 'Failed to add member. Please try again.';
+      });
+    } finally {
+      if (mounted) {
+        setState(() => _isSaving = false);
+      }
     }
   }
 
@@ -862,15 +1369,89 @@ class _AddMemberScreenState extends State<AddMemberScreen> {
                             : null,
                   ),
                   const SizedBox(height: 12),
-                  _TextFormField(
-                    label: 'Membership Duration (months)',
-                    controller: _durationController,
-                    keyboardType: TextInputType.number,
-                    validator: (value) =>
-                        value == null || int.tryParse(value) == null
-                            ? 'Enter duration'
-                            : null,
+                  Text(
+                    'Membership Duration',
+                    style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                          fontWeight: FontWeight.w600,
+                        ),
                   ),
+                  const SizedBox(height: 8),
+                  Wrap(
+                    spacing: 10,
+                    runSpacing: 10,
+                    children: [1, 3, 6, 12]
+                        .map(
+                          (months) => ChoiceChip(
+                            label: Text('$months months'),
+                            selected: _selectedDurationMonths == months &&
+                                _customDaysController.text.trim().isEmpty,
+                            onSelected: (selected) {
+                              setState(() {
+                                _durationErrorText = null;
+                                _selectedDurationMonths =
+                                    selected ? months : null;
+                                if (selected) {
+                                  _customDaysController.clear();
+                                }
+                              });
+                            },
+                            selectedColor: const Color(0xFF1C3B2E),
+                            labelStyle: TextStyle(
+                              color: _selectedDurationMonths == months &&
+                                      _customDaysController.text
+                                          .trim()
+                                          .isEmpty
+                                  ? Colors.white
+                                  : Colors.black87,
+                            ),
+                            shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(20),
+                            ),
+                          ),
+                        )
+                        .toList(),
+                  ),
+                  const SizedBox(height: 12),
+                  TextFormField(
+                    controller: _customDaysController,
+                    keyboardType: TextInputType.number,
+                    onChanged: (_) {
+                      setState(() {
+                        _durationErrorText = null;
+                        if (_customDaysController.text.trim().isNotEmpty) {
+                          _selectedDurationMonths = null;
+                        }
+                      });
+                    },
+                    decoration: InputDecoration(
+                      labelText: 'Custom days',
+                      hintText: 'e.g. 45',
+                      filled: true,
+                      fillColor: const Color(0xFFF6F2ED),
+                      border: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(14),
+                        borderSide: BorderSide.none,
+                      ),
+                    ),
+                  ),
+                  const SizedBox(height: 6),
+                  Text(
+                    'Custom days will be converted to months in records.',
+                    style: Theme.of(context)
+                        .textTheme
+                        .bodySmall
+                        ?.copyWith(color: Colors.black54),
+                  ),
+                  if (_durationErrorText != null) ...[
+                    const SizedBox(height: 6),
+                    Text(
+                      _durationErrorText!,
+                      style: Theme.of(context)
+                          .textTheme
+                          .bodySmall
+                          ?.copyWith(color: const Color(0xFF8A1B1B)),
+                    ),
+                  ],
                   const SizedBox(height: 12),
                   SwitchListTile(
                     contentPadding: EdgeInsets.zero,
@@ -880,6 +1461,16 @@ class _AddMemberScreenState extends State<AddMemberScreen> {
                       setState(() => _membershipActive = value);
                     },
                   ),
+                  if (_errorText != null) ...[
+                    const SizedBox(height: 8),
+                    Text(
+                      _errorText!,
+                      style: Theme.of(context)
+                          .textTheme
+                          .bodyMedium
+                          ?.copyWith(color: const Color(0xFF8A1B1B)),
+                    ),
+                  ],
                   const SizedBox(height: 20),
                   SizedBox(
                     width: double.infinity,
@@ -960,26 +1551,60 @@ class _AttendanceInputScreenState extends State<AttendanceInputScreen> {
       _selectedTime.hour,
       _selectedTime.minute,
     );
-    await SupabaseService().addAttendance(
-      memberId: _selectedMember!.id,
-      timestamp: timestamp,
-    );
-    if (mounted) {
-      setState(() => _isSaving = false);
-      Navigator.of(context).pop();
+    try {
+      await SupabaseService().addAttendance(
+        memberId: _selectedMember!.id,
+        timestamp: timestamp,
+      );
+      if (mounted) {
+        Navigator.of(context).pop();
+      }
+    } on PostgrestException catch (error) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text(error.message)),
+        );
+      }
+    } catch (_) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Failed to save attendance.')),
+        );
+      }
+    } finally {
+      if (mounted) {
+        setState(() => _isSaving = false);
+      }
     }
   }
 
   Future<void> _submitBiometric() async {
     if (_selectedMember == null) return;
     setState(() => _isSaving = true);
-    await SupabaseService().addAttendance(
-      memberId: _selectedMember!.id,
-      timestamp: DateTime.now(),
-    );
-    if (mounted) {
-      setState(() => _isSaving = false);
-      Navigator.of(context).pop();
+    try {
+      await SupabaseService().addAttendance(
+        memberId: _selectedMember!.id,
+        timestamp: DateTime.now(),
+      );
+      if (mounted) {
+        Navigator.of(context).pop();
+      }
+    } on PostgrestException catch (error) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text(error.message)),
+        );
+      }
+    } catch (_) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Failed to save attendance.')),
+        );
+      }
+    } finally {
+      if (mounted) {
+        setState(() => _isSaving = false);
+      }
     }
   }
 
@@ -1488,6 +2113,324 @@ class _DetailRow extends StatelessWidget {
           ),
         ],
       ),
+    );
+  }
+}
+
+class _MetricCard extends StatelessWidget {
+  const _MetricCard({
+    required this.label,
+    required this.value,
+    required this.icon,
+  });
+
+  final String label;
+  final String value;
+  final IconData icon;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: const Color(0xFFFFFBF6),
+        borderRadius: BorderRadius.circular(20),
+        boxShadow: const [
+          BoxShadow(
+            color: Color(0x11000000),
+            blurRadius: 12,
+            offset: Offset(0, 6),
+          ),
+        ],
+      ),
+      child: Row(
+        children: [
+          Container(
+            width: 42,
+            height: 42,
+            decoration: BoxDecoration(
+              color: const Color(0xFFE0A458),
+              borderRadius: BorderRadius.circular(14),
+            ),
+            child: Icon(icon, color: const Color(0xFF1C3B2E)),
+          ),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  label,
+                  style: Theme.of(context)
+                      .textTheme
+                      .bodyMedium
+                      ?.copyWith(color: Colors.black54),
+                ),
+                const SizedBox(height: 4),
+                Text(
+                  value,
+                  style: Theme.of(context).textTheme.titleLarge,
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _KpiCharts extends StatelessWidget {
+  const _KpiCharts({required this.logs});
+
+  final List<AttendanceLog> logs;
+
+  List<int> _dailyCounts(DateTime today) {
+    final days = List.generate(
+      7,
+      (index) => DateTime(today.year, today.month, today.day)
+          .subtract(Duration(days: 6 - index)),
+    );
+    final counts = List<int>.filled(7, 0);
+    for (final log in logs) {
+      final local = log.timestamp.toLocal();
+      for (var i = 0; i < days.length; i++) {
+        final day = days[i];
+        if (local.year == day.year &&
+            local.month == day.month &&
+            local.day == day.day) {
+          counts[i] += 1;
+          break;
+        }
+      }
+    }
+    return counts;
+  }
+
+  List<int> _monthlyCounts(DateTime today) {
+    final months = List.generate(
+      6,
+      (index) => DateTime(today.year, today.month - (5 - index), 1),
+    );
+    final counts = List<int>.filled(6, 0);
+    for (final log in logs) {
+      final local = log.timestamp.toLocal();
+      for (var i = 0; i < months.length; i++) {
+        final month = months[i];
+        if (local.year == month.year && local.month == month.month) {
+          counts[i] += 1;
+          break;
+        }
+      }
+    }
+    return counts;
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final now = DateTime.now();
+    final dailyCounts = _dailyCounts(now);
+    final monthlyCounts = _monthlyCounts(now);
+    final dailyLabels = List.generate(
+      7,
+      (index) => DateFormat('E')
+          .format(now.subtract(Duration(days: 6 - index)))
+          .substring(0, 1),
+    );
+    final monthlyLabels = List.generate(
+      6,
+      (index) => DateFormat('MMM')
+          .format(DateTime(now.year, now.month - (5 - index), 1)),
+    );
+
+    return Column(
+      children: [
+        _InteractiveBarChart(
+          title: 'Daily Visits',
+          subtitle: 'Last 7 days',
+          labels: dailyLabels,
+          values: dailyCounts,
+          barColor: const Color(0xFF1C3B2E),
+        ),
+        const SizedBox(height: 16),
+        _InteractiveBarChart(
+          title: 'Monthly Visits',
+          subtitle: 'Last 6 months',
+          labels: monthlyLabels,
+          values: monthlyCounts,
+          barColor: const Color(0xFFE0A458),
+        ),
+      ],
+    );
+  }
+}
+
+class _InteractiveBarChart extends StatefulWidget {
+  const _InteractiveBarChart({
+    required this.title,
+    required this.subtitle,
+    required this.labels,
+    required this.values,
+    required this.barColor,
+  });
+
+  final String title;
+  final String subtitle;
+  final List<String> labels;
+  final List<int> values;
+  final Color barColor;
+
+  @override
+  State<_InteractiveBarChart> createState() => _InteractiveBarChartState();
+}
+
+class _InteractiveBarChartState extends State<_InteractiveBarChart> {
+  int? _selectedIndex;
+
+  @override
+  Widget build(BuildContext context) {
+    final maxValueRaw = widget.values.isEmpty
+        ? 0
+        : widget.values.reduce((a, b) => a > b ? a : b);
+    final maxValue = maxValueRaw == 0 ? 1 : maxValueRaw;
+    final selectedValue =
+        _selectedIndex == null ? null : widget.values[_selectedIndex!];
+
+    return Container(
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: const Color(0xFFFFFBF6),
+        borderRadius: BorderRadius.circular(20),
+        boxShadow: const [
+          BoxShadow(
+            color: Color(0x11000000),
+            blurRadius: 12,
+            offset: Offset(0, 6),
+          ),
+        ],
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      widget.title,
+                      style: Theme.of(context).textTheme.titleLarge,
+                    ),
+                    const SizedBox(height: 4),
+                    Text(
+                      widget.subtitle,
+                      style: Theme.of(context)
+                          .textTheme
+                          .bodySmall
+                          ?.copyWith(color: Colors.black54),
+                    ),
+                  ],
+                ),
+              ),
+              if (selectedValue != null)
+                Container(
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                  decoration: BoxDecoration(
+                    color: const Color(0xFFF6F2ED),
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                  child: Text(
+                    '$selectedValue visits',
+                    style: Theme.of(context)
+                        .textTheme
+                        .bodySmall
+                        ?.copyWith(fontWeight: FontWeight.w600),
+                  ),
+                ),
+            ],
+          ),
+          const SizedBox(height: 16),
+          SizedBox(
+            height: 140,
+            child: Row(
+              crossAxisAlignment: CrossAxisAlignment.end,
+              children: List.generate(widget.values.length, (index) {
+                final value = widget.values[index];
+                final heightFactor = value / maxValue;
+                final isSelected = _selectedIndex == index;
+                return Expanded(
+                  child: GestureDetector(
+                    onTap: () {
+                      setState(() {
+                        _selectedIndex = isSelected ? null : index;
+                      });
+                    },
+                    child: Padding(
+                      padding: const EdgeInsets.symmetric(horizontal: 6),
+                      child: Column(
+                        mainAxisAlignment: MainAxisAlignment.end,
+                        children: [
+                          AnimatedContainer(
+                            duration: const Duration(milliseconds: 220),
+                            height: 16 + (100 * heightFactor),
+                            decoration: BoxDecoration(
+                              color: isSelected
+                                  ? widget.barColor
+                                  : widget.barColor.withValues(alpha: 0.45),
+                              borderRadius: BorderRadius.circular(12),
+                            ),
+                          ),
+                          const SizedBox(height: 8),
+                          Text(
+                            widget.labels[index],
+                            style: Theme.of(context)
+                                .textTheme
+                                .bodySmall
+                                ?.copyWith(color: Colors.black54),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                );
+              }),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _ReportChip extends StatelessWidget {
+  const _ReportChip({
+    required this.label,
+    required this.selected,
+    required this.onSelected,
+  });
+
+  final String label;
+  final bool selected;
+  final ValueChanged<bool> onSelected;
+
+  @override
+  Widget build(BuildContext context) {
+    return FilterChip(
+      label: Text(label),
+      selected: selected,
+      onSelected: onSelected,
+      selectedColor: const Color(0xFF1C3B2E),
+      labelStyle: TextStyle(
+        color: selected ? Colors.white : Colors.black87,
+        fontWeight: FontWeight.w600,
+      ),
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(20),
+      ),
+      backgroundColor: const Color(0xFFF6F2ED),
+      checkmarkColor: Colors.white,
     );
   }
 }
