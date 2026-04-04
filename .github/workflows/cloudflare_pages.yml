@@ -26,6 +26,9 @@ jobs:
       - name: Build web
         run: flutter build web --release --pwa-strategy=none --no-tree-shake-icons --no-web-resources-cdn
 
+      - name: Force HTML renderer in bootstrap
+        run: sed -i 's/"renderer":"canvaskit"/"renderer":"html"/g' build/web/flutter_bootstrap.js
+
       - name: Deploy to Cloudflare Pages
         uses: cloudflare/pages-action@v1
         with:
