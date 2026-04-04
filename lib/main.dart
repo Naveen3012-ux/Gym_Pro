@@ -3571,6 +3571,49 @@ class _LabeledField extends StatelessWidget {
   }
 }
 
+class _LabeledFormField extends StatelessWidget {
+  const _LabeledFormField({
+    required this.label,
+    required this.controller,
+    required this.validator,
+    this.keyboardType,
+  });
+
+  final String label;
+  final TextEditingController controller;
+  final String? Function(String?) validator;
+  final TextInputType? keyboardType;
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          label,
+          style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                fontWeight: FontWeight.w600,
+              ),
+        ),
+        const SizedBox(height: 8),
+        TextFormField(
+          controller: controller,
+          keyboardType: keyboardType,
+          validator: validator,
+          decoration: InputDecoration(
+            filled: true,
+            fillColor: const Color(0xFFF6F2ED),
+            border: OutlineInputBorder(
+              borderRadius: BorderRadius.circular(14),
+              borderSide: BorderSide.none,
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+}
+
 class FaceIdCheckInCallout extends StatelessWidget {
   const FaceIdCheckInCallout({
     super.key,
