@@ -34,6 +34,13 @@
 </head>
 <body>
   <script>
+    // Force HTML renderer to avoid CanvasKit font issues on desktop browsers.
+    window.flutterWebRenderer = "html";
+    window.flutterConfiguration = {
+      renderer: "html"
+    };
+  </script>
+  <script>
     if ('serviceWorker' in navigator) {
       navigator.serviceWorker.getRegistrations().then(function(registrations) {
         registrations.forEach(function(registration) {
