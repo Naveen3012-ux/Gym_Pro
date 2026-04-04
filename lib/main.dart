@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'dart:math';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
@@ -62,7 +63,172 @@ class GymProApp extends StatelessWidget {
           ),
         ),
       ),
-      home: const LoginScreen(),
+      home: const GymProEntryScreen(),
+    );
+  }
+}
+
+class GymProEntryScreen extends StatelessWidget {
+  const GymProEntryScreen({super.key});
+
+  static const List<_BusinessTile> _businessTiles = [
+    _BusinessTile('Restaurants', Icons.restaurant),
+    _BusinessTile('Clothing stores', Icons.checkroom),
+    _BusinessTile('Grocery stores', Icons.local_grocery_store),
+    _BusinessTile('Hardware stores', Icons.handyman),
+    _BusinessTile('Butcher shops (meat cutting)', Icons.set_meal),
+    _BusinessTile('Gyms', Icons.fitness_center),
+    _BusinessTile('Cafés or bakeries', Icons.coffee),
+    _BusinessTile('Electronics stores', Icons.devices_other),
+    _BusinessTile('Pharmacies', Icons.local_pharmacy),
+    _BusinessTile('Bookshops', Icons.menu_book),
+    _BusinessTile('Pet supply stores', Icons.pets),
+    _BusinessTile('Furniture stores', Icons.chair_alt),
+    _BusinessTile('Beauty salons (selling products)', Icons.spa),
+  ];
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      backgroundColor: const Color(0xFFF6F2ED),
+      body: SafeArea(
+        child: LayoutBuilder(
+          builder: (context, constraints) {
+            const crossAxisCount = 3;
+            const mainAxisSpacing = 10.0;
+            const crossAxisSpacing = 10.0;
+            final rows = (_businessTiles.length / crossAxisCount).ceil();
+            final headerHeight = 54.0;
+            final availableHeight =
+                constraints.maxHeight - headerHeight - 16;
+            final itemHeight =
+                (availableHeight - (rows - 1) * mainAxisSpacing) / rows;
+            final itemWidth = (constraints.maxWidth -
+                    (crossAxisCount - 1) * crossAxisSpacing) /
+                crossAxisCount;
+            final aspectRatio = itemWidth / itemHeight;
+
+            return Padding(
+              padding: const EdgeInsets.all(16),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  SizedBox(
+                    height: headerHeight,
+                    child: Text(
+                      'Choose Your Business Type',
+                      style: Theme.of(context).textTheme.headlineMedium,
+                    ),
+                  ),
+                  const SizedBox(height: 8),
+                  Expanded(
+                    child: GridView.builder(
+                      itemCount: _businessTiles.length,
+                      physics: const NeverScrollableScrollPhysics(),
+                      gridDelegate:
+                          SliverGridDelegateWithFixedCrossAxisCount(
+                        crossAxisCount: crossAxisCount,
+                        mainAxisSpacing: mainAxisSpacing,
+                        crossAxisSpacing: crossAxisSpacing,
+                        childAspectRatio: aspectRatio,
+                      ),
+                      itemBuilder: (context, index) {
+                        final tile = _businessTiles[index];
+                        return InkWell(
+                          borderRadius: BorderRadius.circular(14),
+                          onTap: () {
+                            if (tile.label == 'Gyms') {
+                              Navigator.of(context).push(
+                                MaterialPageRoute(
+                                  builder: (_) => const LoginScreen(),
+                                ),
+                              );
+                            } else {
+                              Navigator.of(context).push(
+                                MaterialPageRoute(
+                                  builder: (_) =>
+                                      EmptyBusinessScreen(title: tile.label),
+                                ),
+                              );
+                            }
+                          },
+                          child: Container(
+                            padding: const EdgeInsets.all(10),
+                            decoration: BoxDecoration(
+                              color: const Color(0xFFFFFBF6),
+                              borderRadius: BorderRadius.circular(14),
+                              border:
+                                  Border.all(color: const Color(0xFFE5DED7)),
+                            ),
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Container(
+                                  width: 34,
+                                  height: 34,
+                                  decoration: BoxDecoration(
+                                    color: const Color(0xFFE0A458),
+                                    borderRadius: BorderRadius.circular(10),
+                                  ),
+                                  child: Icon(
+                                    tile.icon,
+                                    color: const Color(0xFF1C3B2E),
+                                    size: 20,
+                                  ),
+                                ),
+                                const SizedBox(height: 8),
+                                Expanded(
+                                  child: Text(
+                                    tile.label,
+                                    style:
+                                        Theme.of(context).textTheme.bodySmall,
+                                    maxLines: 3,
+                                    overflow: TextOverflow.ellipsis,
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                        );
+                      },
+                    ),
+                  ),
+                ],
+              ),
+            );
+          },
+        ),
+      ),
+    );
+  }
+}
+
+class _BusinessTile {
+  const _BusinessTile(this.label, this.icon);
+
+  final String label;
+  final IconData icon;
+}
+
+class EmptyBusinessScreen extends StatelessWidget {
+  const EmptyBusinessScreen({super.key, required this.title});
+
+  final String title;
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(
+        backgroundColor: const Color(0xFFF6F2ED),
+        elevation: 0,
+        title: Text(title),
+      ),
+      body: Center(
+        child: Text(
+          'Coming soon',
+          style: Theme.of(context).textTheme.titleLarge,
+        ),
+      ),
     );
   }
 }
@@ -81,6 +247,7 @@ class SupabaseService {
                 (row) => Member(
                   id: row['id'] as String,
                   name: row['name'] as String,
+                  mobileNumber: row['mobile_number'] as String? ?? '',
                   email: row['email'] as String,
                   age: row['age'] as int,
                   paymentAmount: row['payment_amount'] as int,
@@ -105,6 +272,7 @@ class SupabaseService {
                   id: row['id'] as String,
                   memberId: row['member_id'] as String,
                   memberName: '',
+                  memberMobile: '',
                   timestamp: DateTime.parse(row['timestamp'] as String),
                 ),
               )
@@ -112,9 +280,28 @@ class SupabaseService {
         );
   }
 
+  Future<String> _generateUniqueMemberId() async {
+    final rows = await _client.from('members').select('id');
+    final existing = rows
+        .map((row) => row['id'])
+        .whereType<String>()
+        .toSet();
+    final random = Random();
+    for (var attempt = 0; attempt < 9000; attempt++) {
+      final id = (random.nextInt(9000) + 1000).toString();
+      if (!existing.contains(id)) {
+        return id;
+      }
+    }
+    throw Exception('Unable to generate a unique member ID.');
+  }
+
   Future<void> addMember(MemberInput input) async {
+    final memberId = await _generateUniqueMemberId();
     await _client.from('members').insert({
+      'id': memberId,
       'name': input.name,
+      'mobile_number': input.mobileNumber,
       'email': input.email,
       'age': input.age,
       'payment_amount': input.paymentAmount,
@@ -124,19 +311,18 @@ class SupabaseService {
   }
 
   Future<String> addMemberReturningId(MemberInput input) async {
-    final row = await _client
-        .from('members')
-        .insert({
-          'name': input.name,
-          'email': input.email,
-          'age': input.age,
-          'payment_amount': input.paymentAmount,
-          'duration_months': input.durationMonths,
-          'membership_active': input.membershipActive,
-        })
-        .select('id')
-        .single();
-    return row['id'] as String;
+    final memberId = await _generateUniqueMemberId();
+    await _client.from('members').insert({
+      'id': memberId,
+      'name': input.name,
+      'mobile_number': input.mobileNumber,
+      'email': input.email,
+      'age': input.age,
+      'payment_amount': input.paymentAmount,
+      'duration_months': input.durationMonths,
+      'membership_active': input.membershipActive,
+    });
+    return memberId;
   }
 
   Future<void> updateMember({
@@ -145,6 +331,7 @@ class SupabaseService {
   }) async {
     await _client.from('members').update({
       'name': input.name,
+      'mobile_number': input.mobileNumber,
       'email': input.email,
       'age': input.age,
       'payment_amount': input.paymentAmount,
@@ -196,6 +383,7 @@ class SupabaseService {
             id: row['id'] as String,
             memberId: row['member_id'] as String,
             memberName: '',
+            memberMobile: '',
             timestamp: DateTime.parse(row['timestamp'] as String),
           ),
         )
@@ -215,6 +403,7 @@ class SupabaseService {
                   id: row['id'] as String,
                   memberId: row['member_id'] as String,
                   memberName: '',
+                  memberMobile: '',
                   timestamp: DateTime.parse(row['timestamp'] as String),
                 ),
               )
@@ -236,6 +425,7 @@ class SupabaseService {
       id: row['id'] as String,
       memberId: row['member_id'] as String,
       memberName: '',
+      memberMobile: '',
       timestamp: DateTime.parse(row['timestamp'] as String),
     );
   }
@@ -244,7 +434,7 @@ class SupabaseService {
     final rows = await _client
         .from('members')
         .select(
-          'id, name, email, age, payment_amount, duration_months, membership_active',
+          'id, name, mobile_number, email, age, payment_amount, duration_months, membership_active',
         )
         .eq('id', memberId)
         .limit(1);
@@ -253,6 +443,7 @@ class SupabaseService {
     return Member(
       id: row['id'] as String,
       name: row['name'] as String,
+      mobileNumber: row['mobile_number'] as String? ?? '',
       email: row['email'] as String,
       age: row['age'] as int,
       paymentAmount: row['payment_amount'] as int,
@@ -312,6 +503,7 @@ class Member {
   const Member({
     required this.id,
     required this.name,
+    required this.mobileNumber,
     required this.email,
     required this.age,
     required this.paymentAmount,
@@ -321,6 +513,7 @@ class Member {
 
   final String id;
   final String name;
+  final String mobileNumber;
   final String email;
   final int age;
   final int paymentAmount;
@@ -331,6 +524,7 @@ class Member {
 class MemberInput {
   const MemberInput({
     required this.name,
+    required this.mobileNumber,
     required this.email,
     required this.age,
     required this.paymentAmount,
@@ -339,6 +533,7 @@ class MemberInput {
   });
 
   final String name;
+  final String mobileNumber;
   final String email;
   final int age;
   final int paymentAmount;
@@ -351,12 +546,14 @@ class AttendanceLog {
     required this.id,
     required this.memberId,
     required this.memberName,
+    required this.memberMobile,
     required this.timestamp,
   });
 
   final String id;
   final String memberId;
   final String memberName;
+  final String memberMobile;
   final DateTime timestamp;
 }
 
@@ -1200,6 +1397,11 @@ class _LoginScreenState extends State<LoginScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
+      appBar: AppBar(
+        backgroundColor: const Color(0xFFF6F2ED),
+        elevation: 0,
+        leading: const BackButton(),
+      ),
       body: Stack(
         children: [
           Container(
@@ -1411,7 +1613,8 @@ class _DashboardScreenState extends State<DashboardScreen> {
                     .where(
                       (member) =>
                           member.name.toLowerCase().contains(query) ||
-                          member.id.toLowerCase().contains(query),
+                          member.id.toLowerCase().contains(query) ||
+                          member.mobileNumber.toLowerCase().contains(query),
                     )
                     .toList();
 
@@ -1506,7 +1709,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
                     ),
                     const SizedBox(height: 8),
                     Text(
-                      'Search by member name or ID and record punch-in/out.',
+                      'Search by name, ID, or mobile number and record punch-in/out.',
                       style: Theme.of(context)
                           .textTheme
                           .bodyMedium
@@ -1517,7 +1720,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
                       controller: controller,
                       onChanged: (_) => setDialogState(() {}),
                       decoration: InputDecoration(
-                        hintText: 'Search member',
+                        hintText: 'Search by name, ID, or mobile',
                         prefixIcon: const Icon(Icons.search),
                         filled: true,
                         fillColor: const Color(0xFFF6F2ED),
@@ -1566,7 +1769,9 @@ class _DashboardScreenState extends State<DashboardScreen> {
                                     ),
                                   ),
                                   title: Text(member.name),
-                                  subtitle: Text('ID: ${member.id}'),
+                                  subtitle: Text(
+                                    'ID: ${member.id} · ${member.mobileNumber.isEmpty ? 'Mobile number not available.' : member.mobileNumber}',
+                                  ),
                                   trailing: isSelected
                                       ? const Icon(
                                           Icons.check_circle,
@@ -1639,133 +1844,320 @@ class _DashboardScreenState extends State<DashboardScreen> {
     );
   }
 
+  Future<void> _openFaceIdEditor(Member member) async {
+    final imagePicker = ImagePicker();
+    Uint8List? faceBytes;
+    bool isCapturing = false;
+    bool isSaving = false;
+    String? errorText;
+
+    await showDialog(
+      context: context,
+      builder: (context) {
+        return StatefulBuilder(
+          builder: (context, setDialogState) {
+            Future<void> captureFace() async {
+              if (isCapturing) return;
+              setDialogState(() {
+                isCapturing = true;
+                errorText = null;
+              });
+              try {
+                Uint8List? bytes;
+                if (useImagePickerForFaceCapture()) {
+                  final image = await imagePicker.pickImage(
+                    source: ImageSource.gallery,
+                    imageQuality: 85,
+                  );
+                  if (image == null) return;
+                  bytes = await image.readAsBytes();
+                } else if (defaultTargetPlatform == TargetPlatform.macOS) {
+                  if (!context.mounted) return;
+                  bytes = await Navigator.of(context).push<Uint8List>(
+                    MaterialPageRoute(
+                      builder: (_) => const FaceCaptureMacOSScreen(
+                        title: 'Capture Face ID',
+                      ),
+                    ),
+                  );
+                  if (bytes == null) return;
+                } else {
+                  final cameras = await availableCameras();
+                  if (cameras.isEmpty) {
+                    setDialogState(() {
+                      errorText = 'No camera found on this device.';
+                    });
+                    return;
+                  }
+                  final frontCamera = cameras.firstWhere(
+                    (camera) => camera.lensDirection == CameraLensDirection.front,
+                    orElse: () => cameras.first,
+                  );
+                  if (!context.mounted) return;
+                  bytes = await Navigator.of(context).push<Uint8List>(
+                    MaterialPageRoute(
+                      builder: (_) => FaceCaptureScreen(camera: frontCamera),
+                    ),
+                  );
+                  if (bytes == null) return;
+                }
+                setDialogState(() {
+                  faceBytes = bytes;
+                });
+              } catch (error) {
+                setDialogState(() {
+                  errorText = 'Failed to capture face image: $error';
+                });
+              } finally {
+                if (context.mounted) {
+                  setDialogState(() => isCapturing = false);
+                }
+              }
+            }
+
+            Future<void> saveFace() async {
+              if (faceBytes == null || isSaving) return;
+              setDialogState(() {
+                isSaving = true;
+                errorText = null;
+              });
+              try {
+                final success = await SupabaseService().enrollFace(
+                  memberId: member.id,
+                  imageBytes: faceBytes!,
+                );
+                if (!success) {
+                  setDialogState(() {
+                    errorText = 'Face registration failed. Please try again.';
+                  });
+                  return;
+                }
+                if (!context.mounted || !mounted) return;
+                Navigator.of(context).pop();
+                ScaffoldMessenger.of(this.context).showSnackBar(
+                  SnackBar(
+                    content: Text('Face ID updated for ${member.name}.'),
+                  ),
+                );
+              } on PostgrestException catch (error) {
+                setDialogState(() {
+                  errorText = error.message;
+                });
+              } catch (error) {
+                setDialogState(() {
+                  errorText = 'Face registration failed: $error';
+                });
+              } finally {
+                if (context.mounted) {
+                  setDialogState(() => isSaving = false);
+                }
+              }
+            }
+
+            return AlertDialog(
+              title: const Text('Register Face ID'),
+              content: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    'Update face ID for ${member.name}.',
+                    style: Theme.of(context)
+                        .textTheme
+                        .bodyMedium
+                        ?.copyWith(color: Colors.black54),
+                  ),
+                  const SizedBox(height: 12),
+                  if (faceBytes != null)
+                    ClipRRect(
+                      borderRadius: BorderRadius.circular(12),
+                      child: Image.memory(
+                        faceBytes!,
+                        height: 140,
+                        width: double.infinity,
+                        fit: BoxFit.cover,
+                      ),
+                    ),
+                  if (faceBytes != null) const SizedBox(height: 10),
+                  SizedBox(
+                    width: double.infinity,
+                    child: OutlinedButton.icon(
+                      style: OutlinedButton.styleFrom(
+                        foregroundColor: const Color(0xFF1C3B2E),
+                        side: const BorderSide(color: Color(0xFF1C3B2E)),
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(14),
+                        ),
+                      ),
+                      onPressed: isCapturing ? null : captureFace,
+                      icon: const Icon(Icons.face_retouching_natural),
+                      label: isCapturing
+                          ? const SizedBox(
+                              width: 18,
+                              height: 18,
+                              child: CircularProgressIndicator(
+                                strokeWidth: 2.2,
+                                color: Color(0xFF1C3B2E),
+                              ),
+                            )
+                          : Text(faceBytes == null
+                              ? (kIsWeb
+                                  ? 'Select Face ID Photo'
+                                  : 'Capture Face ID')
+                              : 'Retake Face ID'),
+                    ),
+                  ),
+                  if (errorText != null) ...[
+                    const SizedBox(height: 10),
+                    Text(
+                      errorText!,
+                      style: Theme.of(context)
+                          .textTheme
+                          .bodySmall
+                          ?.copyWith(color: const Color(0xFF8A1B1B)),
+                    ),
+                  ],
+                ],
+              ),
+              actions: [
+                TextButton(
+                  onPressed: isSaving ? null : () => Navigator.of(context).pop(),
+                  child: const Text('Cancel'),
+                ),
+                ElevatedButton(
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: const Color(0xFF1C3B2E),
+                    foregroundColor: Colors.white,
+                  ),
+                  onPressed: isSaving ? null : saveFace,
+                  child: isSaving
+                      ? const SizedBox(
+                          width: 18,
+                          height: 18,
+                          child: CircularProgressIndicator(
+                            strokeWidth: 2.2,
+                            color: Colors.white,
+                          ),
+                        )
+                      : const Text('Save Face ID'),
+                ),
+              ],
+            );
+          },
+        );
+      },
+    );
+  }
+
+  Map<String, String> _buildPunchLabels(List<AttendanceLog> logs) {
+    final grouped = <String, List<AttendanceLog>>{};
+    for (final log in logs) {
+      final local = log.timestamp.toLocal();
+      final key = '${log.memberId}-${local.year}-${local.month}-${local.day}';
+      grouped.putIfAbsent(key, () => []).add(log);
+    }
+    final labels = <String, String>{};
+    for (final entry in grouped.values) {
+      entry.sort((a, b) => a.timestamp.compareTo(b.timestamp));
+      for (var i = 0; i < entry.length; i++) {
+        labels[entry[i].id] = i.isEven ? 'Punch In' : 'Punch Out';
+      }
+    }
+    return labels;
+  }
+
   @override
   Widget build(BuildContext context) {
     final service = SupabaseService();
-    return Scaffold(
-      appBar: AppBar(
-        elevation: 0,
-        backgroundColor: const Color(0xFFF6F2ED),
-        title: const Text('Dashboard'),
-        actions: [
-          IconButton(
-            onPressed: () {
-              Navigator.of(context).push(
-                MaterialPageRoute(builder: (_) => const AddMemberScreen()),
-              );
-            },
-            icon: const Icon(Icons.person_add_alt),
-          ),
-          IconButton(
-            onPressed: () {
-              Navigator.of(context).push(
-                MaterialPageRoute(
-                  builder: (_) => const AttendanceInputScreen(),
-                ),
-              );
-            },
-            icon: const Icon(Icons.fingerprint),
-          ),
-          IconButton(
-            onPressed: () async {
-              await Supabase.instance.client.auth.signOut();
-              if (context.mounted) {
-                Navigator.of(context).pushAndRemoveUntil(
-                  MaterialPageRoute(builder: (_) => const LoginScreen()),
-                  (_) => false,
-                );
-              }
-            },
-            icon: const Icon(Icons.logout),
-          ),
-        ],
-      ),
-      body: StreamBuilder<List<Member>>(
-        stream: service.watchMembers(),
-        builder: (context, memberSnapshot) {
-          final members = memberSnapshot.data ?? const <Member>[];
-          final memberNameById = {
-            for (final member in members) member.id: member.name,
-          };
-          final totalRevenue = members.fold<int>(
-            0,
-            (sum, member) => sum + member.paymentAmount,
-          );
-          Future<void> editLog(AttendanceLog log) async {
-            final updated = await pickDateTime(
-              context,
-              initial: log.timestamp.toLocal(),
-            );
-            if (updated == null) return;
-            await service.updateAttendance(
-              attendanceId: log.id,
-              timestamp: updated,
-            );
-          }
+    return StreamBuilder<List<Member>>(
+      stream: service.watchMembers(),
+      builder: (context, memberSnapshot) {
+        final members = memberSnapshot.data ?? const <Member>[];
+        final memberById = {
+          for (final member in members) member.id: member,
+        };
+        final totalRevenue = members.fold<int>(
+          0,
+          (sum, member) => sum + member.paymentAmount,
+        );
 
-          Future<void> deleteLog(AttendanceLog log) async {
-            final confirmed = await confirmDestructiveAction(
-              context,
-              title: 'Delete attendance?',
-              message: 'This will remove the attendance record.',
-              confirmLabel: 'Delete',
-            );
-            if (!confirmed) return;
+        Future<void> editLog(AttendanceLog log) async {
+          final updated = await pickDateTime(
+            context,
+            initial: log.timestamp.toLocal(),
+          );
+          if (updated == null) return;
+          await service.updateAttendance(
+            attendanceId: log.id,
+            timestamp: updated,
+          );
+        }
+
+        Future<void> deleteLog(AttendanceLog log) async {
+          final confirmed = await confirmDestructiveAction(
+            context,
+            title: 'Delete attendance?',
+            message: 'This will remove the attendance record.',
+            confirmLabel: 'Delete',
+          );
+          if (!confirmed) return;
+          try {
             await service.deleteAttendance(log.id);
+          } on PostgrestException catch (error) {
+            if (context.mounted) {
+              ScaffoldMessenger.of(context)
+                  .showSnackBar(SnackBar(content: Text(error.message)));
+            }
+          } catch (_) {
+            if (context.mounted) {
+              ScaffoldMessenger.of(context).showSnackBar(
+                const SnackBar(content: Text('Failed to delete attendance.')),
+              );
+            }
           }
-          return ListView(
+        }
+
+        return Scaffold(
+          appBar: AppBar(
+            elevation: 0,
+            backgroundColor: const Color(0xFFF6F2ED),
+            title: const Text('Dashboard'),
+            actions: [
+              IconButton(
+                onPressed: () {
+                  Navigator.of(context).push(
+                    MaterialPageRoute(builder: (_) => const AddMemberScreen()),
+                  );
+                },
+                icon: const Icon(Icons.person_add_alt),
+              ),
+              IconButton(
+                onPressed: () {
+                  Navigator.of(context).push(
+                    MaterialPageRoute(
+                      builder: (_) => const AttendanceInputScreen(),
+                    ),
+                  );
+                },
+                icon: const Icon(Icons.fingerprint),
+              ),
+              IconButton(
+                onPressed: () async {
+                  await Supabase.instance.client.auth.signOut();
+                  if (context.mounted) {
+                    Navigator.of(context).pushAndRemoveUntil(
+                      MaterialPageRoute(builder: (_) => const LoginScreen()),
+                      (_) => false,
+                    );
+                  }
+                },
+                icon: const Icon(Icons.logout),
+              ),
+            ],
+          ),
+          body: ListView(
             padding: const EdgeInsets.fromLTRB(20, 10, 20, 30),
             children: [
-              Container(
-                padding: const EdgeInsets.all(20),
-                decoration: BoxDecoration(
-                  borderRadius: BorderRadius.circular(24),
-                  gradient: const LinearGradient(
-                    colors: [Color(0xFFE0A458), Color(0xFFF6D7A7)],
-                    begin: Alignment.topLeft,
-                    end: Alignment.bottomRight,
-                  ),
-                ),
-                child: Row(
-                  children: [
-                    Expanded(
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Text(
-                            'Today’s Check-ins',
-                            style: Theme.of(context)
-                                .textTheme
-                                .titleLarge
-                                ?.copyWith(color: const Color(0xFF1C3B2E)),
-                          ),
-                          const SizedBox(height: 8),
-                          Text(
-                            'Biometric device is connected and streaming timestamps.',
-                            style: Theme.of(context)
-                                .textTheme
-                                .bodyMedium
-                                ?.copyWith(color: const Color(0xFF1C3B2E)),
-                          ),
-                        ],
-                      ),
-                    ),
-                    Container(
-                      padding: const EdgeInsets.all(12),
-                      decoration: BoxDecoration(
-                        color: const Color(0xFF1C3B2E),
-                        borderRadius: BorderRadius.circular(16),
-                      ),
-                      child: const Icon(
-                        Icons.fingerprint,
-                        color: Colors.white,
-                        size: 28,
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-              const SizedBox(height: 18),
               Row(
                 children: [
                   Expanded(
@@ -1792,56 +2184,10 @@ class _DashboardScreenState extends State<DashboardScreen> {
               const SizedBox(height: 16),
               FaceIdCheckInCallout(
                 title: 'Face ID Check-In',
-                subtitle:
-                    'Open live Face ID and mark attendance in seconds.',
+                subtitle: '',
               ),
               const SizedBox(height: 16),
-              Row(
-                children: [
-                  Expanded(
-                    child: SizedBox(
-                      height: 50,
-                      child: ElevatedButton.icon(
-                        style: ElevatedButton.styleFrom(
-                          backgroundColor: const Color(0xFF1C3B2E),
-                          foregroundColor: Colors.white,
-                          shape: RoundedRectangleBorder(
-                            borderRadius: BorderRadius.circular(14),
-                          ),
-                        ),
-                        onPressed: () {
-                          Navigator.of(context).push(
-                            MaterialPageRoute(
-                              builder: (_) => const AddMemberScreen(),
-                            ),
-                          );
-                        },
-                        icon: const Icon(Icons.person_add_alt),
-                        label: const Text('Add Member'),
-                      ),
-                    ),
-                  ),
-                  const SizedBox(width: 12),
-                  Expanded(
-                    child: SizedBox(
-                      height: 50,
-                      child: OutlinedButton.icon(
-                        style: OutlinedButton.styleFrom(
-                          foregroundColor: const Color(0xFF1C3B2E),
-                          side: const BorderSide(color: Color(0xFF1C3B2E)),
-                          shape: RoundedRectangleBorder(
-                            borderRadius: BorderRadius.circular(14),
-                          ),
-                        ),
-                        onPressed: () => _openAttendanceDialog(members, service),
-                        icon: const Icon(Icons.fingerprint),
-                        label: const Text('Add Attendance'),
-                      ),
-                    ),
-                  ),
-                ],
-              ),
-              const SizedBox(height: 20),
+              const SizedBox(height: 4),
               Text(
                 'Performance Overview',
                 style: Theme.of(context).textTheme.headlineMedium,
@@ -1999,6 +2345,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
                         ),
                       );
                     },
+                    onEditFaceId: () => _openFaceIdEditor(member),
                     onDelete: () async {
                       final confirmed = await confirmDestructiveAction(
                         context,
@@ -2008,7 +2355,20 @@ class _DashboardScreenState extends State<DashboardScreen> {
                         confirmLabel: 'Delete Member',
                       );
                       if (!confirmed) return;
-                      await SupabaseService().deleteMember(member.id);
+                      try {
+                        await SupabaseService().deleteMember(member.id);
+                      } on PostgrestException catch (error) {
+                        if (context.mounted) {
+                          ScaffoldMessenger.of(context)
+                              .showSnackBar(SnackBar(content: Text(error.message)));
+                        }
+                      } catch (_) {
+                        if (context.mounted) {
+                          ScaffoldMessenger.of(context).showSnackBar(
+                            const SnackBar(content: Text('Failed to delete member.')),
+                          );
+                        }
+                      }
                     },
                   ),
                 ),
@@ -2037,33 +2397,52 @@ class _DashboardScreenState extends State<DashboardScreen> {
                           id: log.id,
                           memberId: log.memberId,
                           memberName:
-                              memberNameById[log.memberId] ?? 'Member',
+                              memberById[log.memberId]?.name ?? 'Member',
+                          memberMobile:
+                              memberById[log.memberId]?.mobileNumber ?? '',
                           timestamp: log.timestamp,
                         ),
                       )
                       .toList();
+                  final punchLabels = _buildPunchLabels(resolvedLogs);
                   return _AttendanceLogCard(
                     logs: resolvedLogs,
+                    punchLabels: punchLabels,
                     onEdit: editLog,
                     onDelete: deleteLog,
                   );
                 },
               ),
             ],
-          );
-        },
-      ),
-      floatingActionButton: FloatingActionButton.extended(
-        onPressed: () {
-          Navigator.of(context).push(
-            MaterialPageRoute(builder: (_) => const AddMemberScreen()),
-          );
-        },
-        backgroundColor: const Color(0xFF1C3B2E),
-        foregroundColor: Colors.white,
-        label: const Text('Add Member'),
-        icon: const Icon(Icons.person_add),
-      ),
+          ),
+          floatingActionButton: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              FloatingActionButton.extended(
+                heroTag: 'add-member',
+                onPressed: () {
+                  Navigator.of(context).push(
+                    MaterialPageRoute(builder: (_) => const AddMemberScreen()),
+                  );
+                },
+                backgroundColor: const Color(0xFF1C3B2E),
+                foregroundColor: Colors.white,
+                label: const Text('Add Member'),
+                icon: const Icon(Icons.person_add),
+              ),
+              const SizedBox(width: 12),
+              FloatingActionButton.extended(
+                heroTag: 'add-attendance',
+                onPressed: () => _openAttendanceDialog(members, service),
+                backgroundColor: const Color(0xFFE0A458),
+                foregroundColor: const Color(0xFF1C3B2E),
+                label: const Text('Add Attendance'),
+                icon: const Icon(Icons.fingerprint),
+              ),
+            ],
+          ),
+        );
+      },
     );
   }
 }
@@ -2173,11 +2552,19 @@ class _MemberDetailScreenState extends State<MemberDetailScreen> {
                   style: Theme.of(context).textTheme.headlineMedium,
                 ),
                 const SizedBox(height: 8),
+                _DetailRow(label: 'Member ID', value: _member.id),
+                _DetailRow(label: 'Mobile', value: _member.mobileNumber),
                 _DetailRow(label: 'Email', value: _member.email),
                 _DetailRow(label: 'Age', value: '${_member.age} years'),
                 _DetailRow(
-                  label: 'Payment Amount',
-                  value: '₹${_member.paymentAmount}',
+                  label: 'Membership Duration',
+                  value: _member.durationMonths == 1
+                      ? '1 month'
+                      : '${_member.durationMonths} months',
+                ),
+                _DetailRow(
+                  label: 'Days Left',
+                  value: '${_member.durationMonths * 30} days',
                 ),
                 _DetailRow(
                   label: 'Duration',
@@ -2339,11 +2726,13 @@ class AddMemberScreen extends StatefulWidget {
 class _AddMemberScreenState extends State<AddMemberScreen> {
   final _formKey = GlobalKey<FormState>();
   final _nameController = TextEditingController();
+  final _mobileController = TextEditingController();
   final _emailController = TextEditingController();
   final _ageController = TextEditingController();
   final _paymentController = TextEditingController();
   final _customDaysController = TextEditingController();
   bool _membershipActive = true;
+  bool _useCustomDays = false;
   bool _isSaving = false;
   bool _isCapturingFace = false;
   bool _isEnrollingFace = false;
@@ -2358,6 +2747,7 @@ class _AddMemberScreenState extends State<AddMemberScreen> {
   @override
   void dispose() {
     _nameController.dispose();
+    _mobileController.dispose();
     _emailController.dispose();
     _ageController.dispose();
     _paymentController.dispose();
@@ -2477,7 +2867,7 @@ class _AddMemberScreenState extends State<AddMemberScreen> {
       final customDaysText = _customDaysController.text.trim();
       int? durationMonths;
       String? durationError;
-      if (customDaysText.isNotEmpty) {
+      if (_useCustomDays) {
         final days = int.tryParse(customDaysText);
         if (days == null || days <= 0) {
           durationError = 'Enter valid custom days';
@@ -2502,6 +2892,7 @@ class _AddMemberScreenState extends State<AddMemberScreen> {
           await service.addMemberReturningId(
             MemberInput(
               name: _nameController.text.trim(),
+              mobileNumber: _mobileController.text.trim(),
               email: _emailController.text.trim(),
               age: int.parse(_ageController.text.trim()),
               paymentAmount: int.parse(_paymentController.text.trim()),
@@ -2564,6 +2955,16 @@ class _AddMemberScreenState extends State<AddMemberScreen> {
                   ),
                   const SizedBox(height: 12),
                   _TextFormField(
+                    label: 'Mobile Number',
+                    controller: _mobileController,
+                    keyboardType: TextInputType.phone,
+                    validator: (value) =>
+                        value == null || value.trim().isEmpty
+                            ? 'Enter mobile number'
+                            : null,
+                  ),
+                  const SizedBox(height: 12),
+                  _TextFormField(
                     label: 'Email',
                     controller: _emailController,
                     keyboardType: TextInputType.emailAddress,
@@ -2603,18 +3004,20 @@ class _AddMemberScreenState extends State<AddMemberScreen> {
                   Wrap(
                     spacing: 10,
                     runSpacing: 10,
-                    children: [1, 3, 6, 12]
+                    children: [
+                      ...[1, 3, 6, 12]
                         .map(
                           (months) => ChoiceChip(
                             label: Text('$months months'),
                             selected: _selectedDurationMonths == months &&
-                                _customDaysController.text.trim().isEmpty,
+                                !_useCustomDays,
                             onSelected: (selected) {
                               setState(() {
                                 _durationErrorText = null;
                                 _selectedDurationMonths =
                                     selected ? months : null;
                                 if (selected) {
+                                  _useCustomDays = false;
                                   _customDaysController.clear();
                                 }
                               });
@@ -2622,9 +3025,7 @@ class _AddMemberScreenState extends State<AddMemberScreen> {
                             selectedColor: const Color(0xFF1C3B2E),
                             labelStyle: TextStyle(
                               color: _selectedDurationMonths == months &&
-                                      _customDaysController.text
-                                          .trim()
-                                          .isEmpty
+                                      !_useCustomDays
                                   ? Colors.white
                                   : Colors.black87,
                             ),
@@ -2633,39 +3034,61 @@ class _AddMemberScreenState extends State<AddMemberScreen> {
                             ),
                           ),
                         )
-                        .toList(),
+                        ,
+                      ChoiceChip(
+                        label: const Text('Custom days'),
+                        selected: _useCustomDays,
+                        onSelected: (selected) {
+                          setState(() {
+                            _durationErrorText = null;
+                            _useCustomDays = selected;
+                            if (selected) {
+                              _selectedDurationMonths = null;
+                            } else {
+                              _customDaysController.clear();
+                            }
+                          });
+                        },
+                        selectedColor: const Color(0xFF1C3B2E),
+                        labelStyle: TextStyle(
+                          color: _useCustomDays ? Colors.white : Colors.black87,
+                        ),
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(20),
+                        ),
+                      ),
+                    ],
                   ),
-                  const SizedBox(height: 12),
-                  TextFormField(
-                    controller: _customDaysController,
-                    keyboardType: TextInputType.number,
-                    onChanged: (_) {
-                      setState(() {
-                        _durationErrorText = null;
-                        if (_customDaysController.text.trim().isNotEmpty) {
-                          _selectedDurationMonths = null;
-                        }
-                      });
-                    },
-                    decoration: InputDecoration(
-                      labelText: 'Custom days',
-                      hintText: 'e.g. 45',
-                      filled: true,
-                      fillColor: const Color(0xFFF6F2ED),
-                      border: OutlineInputBorder(
-                        borderRadius: BorderRadius.circular(14),
-                        borderSide: BorderSide.none,
+                  if (_useCustomDays) ...[
+                    const SizedBox(height: 12),
+                    TextFormField(
+                      controller: _customDaysController,
+                      keyboardType: TextInputType.number,
+                      onChanged: (_) {
+                        setState(() {
+                          _durationErrorText = null;
+                        });
+                      },
+                      decoration: InputDecoration(
+                        labelText: 'Enter custom days',
+                        hintText: 'e.g. 45',
+                        filled: true,
+                        fillColor: const Color(0xFFF6F2ED),
+                        border: OutlineInputBorder(
+                          borderRadius: BorderRadius.circular(14),
+                          borderSide: BorderSide.none,
+                        ),
                       ),
                     ),
-                  ),
-                  const SizedBox(height: 6),
-                  Text(
-                    'Custom days will be converted to months in records.',
-                    style: Theme.of(context)
-                        .textTheme
-                        .bodySmall
-                        ?.copyWith(color: Colors.black54),
-                  ),
+                    const SizedBox(height: 6),
+                    Text(
+                      'Custom days will be converted to months in records.',
+                      style: Theme.of(context)
+                          .textTheme
+                          .bodySmall
+                          ?.copyWith(color: Colors.black54),
+                    ),
+                  ],
                   if (_durationErrorText != null) ...[
                     const SizedBox(height: 6),
                     Text(
@@ -2678,24 +3101,10 @@ class _AddMemberScreenState extends State<AddMemberScreen> {
                   ],
                   const SizedBox(height: 12),
                   Text(
-                    'Face ID Registration',
+                    'Register Face ID',
                     style: Theme.of(context).textTheme.bodyMedium?.copyWith(
                           fontWeight: FontWeight.w600,
                         ),
-                  ),
-                  const SizedBox(height: 6),
-                  Text(
-                    'Capture a face photo to link with this member profile.',
-                    style: Theme.of(context)
-                        .textTheme
-                        .bodySmall
-                        ?.copyWith(color: Colors.black54),
-                  ),
-                  const SizedBox(height: 10),
-                  FaceIdCheckInCallout(
-                    title: 'Face ID Check-In',
-                    subtitle:
-                        'Already registered? Use Face ID to mark attendance.',
                   ),
                   const SizedBox(height: 12),
                   if (_faceImageBytes != null)
@@ -2824,6 +3233,7 @@ class EditMemberScreen extends StatefulWidget {
 class _EditMemberScreenState extends State<EditMemberScreen> {
   final _formKey = GlobalKey<FormState>();
   late final TextEditingController _nameController;
+  late final TextEditingController _mobileController;
   late final TextEditingController _emailController;
   late final TextEditingController _ageController;
   late final TextEditingController _paymentController;
@@ -2835,6 +3245,7 @@ class _EditMemberScreenState extends State<EditMemberScreen> {
   void initState() {
     super.initState();
     _nameController = TextEditingController(text: widget.member.name);
+    _mobileController = TextEditingController(text: widget.member.mobileNumber);
     _emailController = TextEditingController(text: widget.member.email);
     _ageController =
         TextEditingController(text: widget.member.age.toString());
@@ -2848,6 +3259,7 @@ class _EditMemberScreenState extends State<EditMemberScreen> {
   @override
   void dispose() {
     _nameController.dispose();
+    _mobileController.dispose();
     _emailController.dispose();
     _ageController.dispose();
     _paymentController.dispose();
@@ -2863,6 +3275,7 @@ class _EditMemberScreenState extends State<EditMemberScreen> {
         memberId: widget.member.id,
         input: MemberInput(
           name: _nameController.text.trim(),
+          mobileNumber: _mobileController.text.trim(),
           email: _emailController.text.trim(),
           age: int.parse(_ageController.text.trim()),
           paymentAmount: int.parse(_paymentController.text.trim()),
@@ -2949,6 +3362,16 @@ class _EditMemberScreenState extends State<EditMemberScreen> {
                             ? 'Enter a name'
                             : null,
                     keyboardType: TextInputType.name,
+                  ),
+                  const SizedBox(height: 14),
+                  _LabeledFormField(
+                    label: 'Mobile Number',
+                    controller: _mobileController,
+                    validator: (value) =>
+                        value == null || value.trim().isEmpty
+                            ? 'Enter a mobile number'
+                            : null,
+                    keyboardType: TextInputType.phone,
                   ),
                   const SizedBox(height: 14),
                   _LabeledFormField(
@@ -3065,6 +3488,13 @@ class _AttendanceInputScreenState extends State<AttendanceInputScreen> {
   bool _isSaving = false;
   bool _isRecognizing = false;
   final ImagePicker _imagePicker = ImagePicker();
+  final TextEditingController _memberSearchController = TextEditingController();
+
+  @override
+  void dispose() {
+    _memberSearchController.dispose();
+    super.dispose();
+  }
 
   Future<void> _pickDate() async {
     final picked = await showDatePicker(
@@ -3289,36 +3719,103 @@ class _AttendanceInputScreenState extends State<AttendanceInputScreen> {
                           'Use a live scan to identify members and log attendance.',
                       showButton: false,
                     ),
-                    const SizedBox(height: 20),
-                    Text(
-                      'Member',
-                      style: Theme.of(context).textTheme.titleLarge,
-                    ),
-                    const SizedBox(height: 10),
-                    DropdownButtonFormField<Member>(
-                      key: ValueKey(_selectedMember?.id ?? ''),
-                      initialValue: _selectedMember,
-                      decoration: InputDecoration(
-                        filled: true,
-                        fillColor: const Color(0xFFF6F2ED),
-                        border: OutlineInputBorder(
-                          borderRadius: BorderRadius.circular(14),
-                          borderSide: BorderSide.none,
-                        ),
+                  const SizedBox(height: 20),
+                  Text(
+                    'Member',
+                    style: Theme.of(context).textTheme.titleLarge,
+                  ),
+                  const SizedBox(height: 10),
+                  TextField(
+                    controller: _memberSearchController,
+                    onChanged: (_) => setState(() {}),
+                    decoration: InputDecoration(
+                      hintText: 'Search by name, ID, or mobile',
+                      prefixIcon: const Icon(Icons.search),
+                      filled: true,
+                      fillColor: const Color(0xFFF6F2ED),
+                      border: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(14),
+                        borderSide: BorderSide.none,
                       ),
-                      hint: const Text('Select member'),
-                      items: members
-                          .map(
-                            (member) => DropdownMenuItem<Member>(
-                              value: member,
-                              child: Text(member.name),
-                            ),
-                          )
-                          .toList(),
-                      onChanged: (value) {
-                        setState(() => _selectedMember = value);
+                    ),
+                  ),
+                  const SizedBox(height: 12),
+                  Container(
+                    constraints: const BoxConstraints(maxHeight: 220),
+                    padding: const EdgeInsets.all(12),
+                    decoration: BoxDecoration(
+                      color: const Color(0xFFFFFBF6),
+                      borderRadius: BorderRadius.circular(16),
+                      border: Border.all(color: const Color(0xFFE5DED7)),
+                    ),
+                    child: Builder(
+                      builder: (context) {
+                        final query =
+                            _memberSearchController.text.trim().toLowerCase();
+                        final filteredMembers = query.isEmpty
+                            ? members
+                            : members
+                                .where(
+                                  (member) =>
+                                      member.name
+                                          .toLowerCase()
+                                          .contains(query) ||
+                                      member.id
+                                          .toLowerCase()
+                                          .contains(query) ||
+                                      member.mobileNumber
+                                          .toLowerCase()
+                                          .contains(query),
+                                )
+                                .toList();
+                        if (filteredMembers.isEmpty) {
+                          return Text(
+                            'No members found.',
+                            style: Theme.of(context)
+                                .textTheme
+                                .bodyMedium
+                                ?.copyWith(color: Colors.black54),
+                          );
+                        }
+                        return ListView.separated(
+                          shrinkWrap: true,
+                          itemBuilder: (context, index) {
+                            final member = filteredMembers[index];
+                            final isSelected =
+                                _selectedMember?.id == member.id;
+                            return ListTile(
+                              contentPadding: EdgeInsets.zero,
+                              onTap: () {
+                                setState(() => _selectedMember = member);
+                              },
+                              leading: CircleAvatar(
+                                backgroundColor: isSelected
+                                    ? const Color(0xFF1C3B2E)
+                                    : const Color(0xFFE0A458),
+                                child: Text(
+                                  member.name.substring(0, 1),
+                                  style: const TextStyle(color: Colors.white),
+                                ),
+                              ),
+                              title: Text(member.name),
+                              subtitle: Text(
+                                'ID: ${member.id} · ${member.mobileNumber.isEmpty ? 'Mobile number not available.' : member.mobileNumber}',
+                              ),
+                              trailing: isSelected
+                                  ? const Icon(
+                                      Icons.check_circle,
+                                      color: Color(0xFF1C3B2E),
+                                    )
+                                  : null,
+                            );
+                          },
+                          separatorBuilder: (_, _) =>
+                              const Divider(height: 12),
+                          itemCount: filteredMembers.length,
+                        );
                       },
                     ),
+                  ),
                     const SizedBox(height: 20),
                     Text(
                       'Manual Entry',
@@ -3648,13 +4145,14 @@ class FaceIdCheckInCallout extends StatelessWidget {
             style: Theme.of(context).textTheme.titleLarge,
           ),
           const SizedBox(height: 6),
-          Text(
-            subtitle,
-            style: Theme.of(context)
-                .textTheme
-                .bodyMedium
-                ?.copyWith(color: Colors.black54),
-          ),
+          if (subtitle.trim().isNotEmpty)
+            Text(
+              subtitle,
+              style: Theme.of(context)
+                  .textTheme
+                  .bodyMedium
+                  ?.copyWith(color: Colors.black54),
+            ),
           if (showButton) ...[
             const SizedBox(height: 12),
             SizedBox(
@@ -3731,12 +4229,14 @@ class _MemberTile extends StatelessWidget {
     required this.member,
     required this.onTap,
     required this.onEdit,
+    required this.onEditFaceId,
     required this.onDelete,
   });
 
   final Member member;
   final VoidCallback onTap;
   final VoidCallback onEdit;
+  final VoidCallback onEditFaceId;
   final VoidCallback onDelete;
 
   @override
@@ -3755,88 +4255,127 @@ class _MemberTile extends StatelessWidget {
           ),
         ],
       ),
-      child: InkWell(
-        onTap: onTap,
-        borderRadius: BorderRadius.circular(20),
-        child: Row(
-          children: [
-            CircleAvatar(
-              radius: 22,
-              backgroundColor: const Color(0xFF1C3B2E),
-              child: Text(
-                member.name.substring(0, 1),
-                style: const TextStyle(
-                  color: Colors.white,
-                  fontWeight: FontWeight.w600,
-                ),
-              ),
-            ),
-            const SizedBox(width: 14),
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
+      child: Row(
+        children: [
+          Expanded(
+            child: InkWell(
+              onTap: onTap,
+              borderRadius: BorderRadius.circular(20),
+              child: Row(
                 children: [
-                  Text(
-                    member.name,
-                    style: Theme.of(context).textTheme.titleLarge,
+                  CircleAvatar(
+                    radius: 22,
+                    backgroundColor: const Color(0xFF1C3B2E),
+                    child: Text(
+                      member.name.substring(0, 1),
+                      style: const TextStyle(
+                        color: Colors.white,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
                   ),
-                  const SizedBox(height: 4),
-                  Text(
-                    member.email,
-                    style: Theme.of(context)
-                        .textTheme
-                        .bodyMedium
-                        ?.copyWith(color: Colors.black54),
+                  const SizedBox(width: 14),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Row(
+                          children: [
+                            Expanded(
+                              child: Text(
+                                member.name,
+                                style: Theme.of(context).textTheme.titleLarge,
+                              ),
+                            ),
+                            const SizedBox(width: 8),
+                            Text(
+                              member.id,
+                              style: Theme.of(context)
+                                  .textTheme
+                                  .bodyMedium
+                                  ?.copyWith(
+                                    fontWeight: FontWeight.w600,
+                                    color: const Color(0xFF1C3B2E),
+                                  ),
+                            ),
+                          ],
+                        ),
+                        const SizedBox(height: 4),
+                        Text(
+                          member.mobileNumber.isEmpty
+                              ? 'Mobile number not available.'
+                              : member.mobileNumber,
+                          style: Theme.of(context)
+                              .textTheme
+                              .bodyMedium
+                              ?.copyWith(color: Colors.black54),
+                        ),
+                      ],
+                    ),
                   ),
                 ],
               ),
             ),
-            Column(
-              crossAxisAlignment: CrossAxisAlignment.end,
-              children: [
-                Text(
-                  '₹${member.paymentAmount}',
-                  style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+          ),
+          const SizedBox(width: 12),
+          Column(
+            crossAxisAlignment: CrossAxisAlignment.end,
+            children: [
+              Text(
+                member.durationMonths == 1
+                    ? '1 month'
+                    : '${member.durationMonths} months',
+                style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                      fontWeight: FontWeight.w600,
+                    ),
+              ),
+              const SizedBox(height: 4),
+              Text(
+                '${member.durationMonths * 30} days left',
+                style: Theme.of(context)
+                    .textTheme
+                    .bodySmall
+                    ?.copyWith(color: Colors.black54),
+              ),
+              const SizedBox(height: 6),
+              Container(
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                decoration: BoxDecoration(
+                  color: member.membershipActive
+                      ? const Color(0xFFDFF1E5)
+                      : const Color(0xFFF9DADA),
+                  borderRadius: BorderRadius.circular(12),
+                ),
+                child: Text(
+                  member.membershipActive ? 'Active' : 'Pending',
+                  style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                        color: member.membershipActive
+                            ? const Color(0xFF1C3B2E)
+                            : const Color(0xFF8A1B1B),
                         fontWeight: FontWeight.w600,
                       ),
                 ),
-                const SizedBox(height: 6),
-                Container(
-                  padding:
-                      const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
-                  decoration: BoxDecoration(
-                    color: member.membershipActive
-                        ? const Color(0xFFDFF1E5)
-                        : const Color(0xFFF9DADA),
-                    borderRadius: BorderRadius.circular(12),
-                  ),
-                  child: Text(
-                    member.membershipActive ? 'Active' : 'Pending',
-                    style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                          color: member.membershipActive
-                              ? const Color(0xFF1C3B2E)
-                              : const Color(0xFF8A1B1B),
-                          fontWeight: FontWeight.w600,
-                        ),
-                  ),
-                ),
-                PopupMenuButton<String>(
-                  onSelected: (value) {
-                    if (value == 'edit') {
-                      onEdit();
-                    } else if (value == 'delete') {
-                      onDelete();
-                    }
-                  },
-                  itemBuilder: (context) => const [
-                    PopupMenuItem(value: 'edit', child: Text('Edit')),
-                    PopupMenuItem(value: 'delete', child: Text('Delete')),
-                  ],
-                ),
-              ],
-            ),
-          ],
-        ),
+              ),
+              PopupMenuButton<String>(
+                onSelected: (value) {
+                  if (value == 'edit') {
+                    onEdit();
+                  } else if (value == 'face') {
+                    onEditFaceId();
+                  } else if (value == 'delete') {
+                    onDelete();
+                  }
+                },
+                itemBuilder: (context) => const [
+                  PopupMenuItem(value: 'edit', child: Text('Edit')),
+                  PopupMenuItem(value: 'face', child: Text('Edit Face ID')),
+                  PopupMenuItem(value: 'delete', child: Text('Delete')),
+                ],
+              ),
+            ],
+          ),
+        ],
       ),
     );
   }
@@ -3845,11 +4384,13 @@ class _MemberTile extends StatelessWidget {
 class _AttendanceLogCard extends StatelessWidget {
   const _AttendanceLogCard({
     required this.logs,
+    required this.punchLabels,
     this.onEdit,
     this.onDelete,
   });
 
   final List<AttendanceLog> logs;
+  final Map<String, String> punchLabels;
   final Future<void> Function(AttendanceLog log)? onEdit;
   final Future<void> Function(AttendanceLog log)? onDelete;
 
@@ -3878,7 +4419,10 @@ class _AttendanceLogCard extends StatelessWidget {
                       Expanded(
                         child: _AttendanceRow(
                           name: log.memberName,
-                          time: DateFormat('h:mm a')
+                          mobile: log.memberMobile,
+                          memberId: log.memberId,
+                          punchLabel: punchLabels[log.id] ?? 'Punch',
+                          time: DateFormat('MMM d, y · h:mm a')
                               .format(log.timestamp.toLocal()),
                         ),
                       ),
@@ -3917,9 +4461,18 @@ class _AttendanceLogCard extends StatelessWidget {
 }
 
 class _AttendanceRow extends StatelessWidget {
-  const _AttendanceRow({required this.name, required this.time});
+  const _AttendanceRow({
+    required this.name,
+    required this.mobile,
+    required this.memberId,
+    required this.punchLabel,
+    required this.time,
+  });
 
   final String name;
+  final String mobile;
+  final String memberId;
+  final String punchLabel;
   final String time;
 
   @override
@@ -3929,17 +4482,68 @@ class _AttendanceRow extends StatelessWidget {
         const Icon(Icons.circle, size: 8, color: Color(0xFF1C3B2E)),
         const SizedBox(width: 8),
         Expanded(
-          child: Text(
-            name,
-            style: Theme.of(context).textTheme.bodyMedium,
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                children: [
+                  Expanded(
+                    child: Text(
+                      name,
+                      style: Theme.of(context).textTheme.bodyMedium,
+                    ),
+                  ),
+                  const SizedBox(width: 6),
+                  Text(
+                    memberId,
+                    style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                          color: const Color(0xFF1C3B2E),
+                          fontWeight: FontWeight.w600,
+                        ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 2),
+              Text(
+                mobile.isEmpty ? 'Mobile number not available.' : mobile,
+                style: Theme.of(context)
+                    .textTheme
+                    .bodySmall
+                    ?.copyWith(color: Colors.black54),
+              ),
+            ],
           ),
         ),
-        Text(
-          time,
-          style: Theme.of(context)
-              .textTheme
-              .bodyMedium
-              ?.copyWith(fontWeight: FontWeight.w600),
+        Column(
+          crossAxisAlignment: CrossAxisAlignment.end,
+          children: [
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+              decoration: BoxDecoration(
+                color: punchLabel == 'Punch In'
+                    ? const Color(0xFFDFF1E5)
+                    : const Color(0xFFF9DADA),
+                borderRadius: BorderRadius.circular(10),
+              ),
+              child: Text(
+                punchLabel,
+                style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                      color: punchLabel == 'Punch In'
+                          ? const Color(0xFF1C3B2E)
+                          : const Color(0xFF8A1B1B),
+                      fontWeight: FontWeight.w600,
+                    ),
+              ),
+            ),
+            const SizedBox(height: 2),
+            Text(
+              time,
+              style: Theme.of(context)
+                  .textTheme
+                  .bodyMedium
+                  ?.copyWith(fontWeight: FontWeight.w600),
+            ),
+          ],
         ),
       ],
     );
@@ -4110,24 +4714,50 @@ class _KpiCharts extends StatelessWidget {
           .format(DateTime(now.year, now.month - (5 - index), 1)),
     );
 
-    return Column(
-      children: [
-        _InteractiveBarChart(
-          title: 'Daily Visits',
-          subtitle: 'Last 7 days',
-          labels: dailyLabels,
-          values: dailyCounts,
-          barColor: const Color(0xFF1C3B2E),
-        ),
-        const SizedBox(height: 16),
-        _InteractiveBarChart(
-          title: 'Monthly Visits',
-          subtitle: 'Last 6 months',
-          labels: monthlyLabels,
-          values: monthlyCounts,
-          barColor: const Color(0xFFE0A458),
-        ),
-      ],
+    return DefaultTabController(
+      length: 2,
+      child: Column(
+        children: [
+          Container(
+            decoration: BoxDecoration(
+              color: const Color(0xFFFFFBF6),
+              borderRadius: BorderRadius.circular(16),
+              border: Border.all(color: const Color(0xFFE5DED7)),
+            ),
+            child: TabBar(
+              labelColor: const Color(0xFF1C3B2E),
+              unselectedLabelColor: Colors.black54,
+              indicatorColor: const Color(0xFF1C3B2E),
+              tabs: const [
+                Tab(text: 'Daily'),
+                Tab(text: 'Monthly'),
+              ],
+            ),
+          ),
+          const SizedBox(height: 12),
+          SizedBox(
+            height: 260,
+            child: TabBarView(
+              children: [
+                _InteractiveBarChart(
+                  title: 'Daily Visits',
+                  subtitle: 'Last 7 days',
+                  labels: dailyLabels,
+                  values: dailyCounts,
+                  barColor: const Color(0xFF1C3B2E),
+                ),
+                _InteractiveBarChart(
+                  title: 'Monthly Visits',
+                  subtitle: 'Last 6 months',
+                  labels: monthlyLabels,
+                  values: monthlyCounts,
+                  barColor: const Color(0xFFE0A458),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
     );
   }
 }
