@@ -411,6 +411,7 @@ Future<DateTime?> pickDateTime(
     lastDate: DateTime.now().add(const Duration(days: 365)),
   );
   if (pickedDate == null) return null;
+  if (!context.mounted) return null;
   final pickedTime = await showTimePicker(
     context: context,
     initialTime: TimeOfDay.fromDateTime(initial),
