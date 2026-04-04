@@ -356,6 +356,18 @@ class _FaceCaptureScreenState extends State<FaceCaptureScreen> {
   Future<void>? _initializeControllerFuture;
   bool _isCapturing = false;
   String? _errorText;
+  int _tipIndex = 0;
+  final List<String> _tips = const [
+    'Center your face in the oval',
+    'Keep your eyes open and look at the camera',
+    'Hold still for a sharp capture',
+  ];
+
+  void _advanceTip() {
+    setState(() {
+      _tipIndex = (_tipIndex + 1) % _tips.length;
+    });
+  }
 
   @override
   void initState() {
@@ -485,15 +497,55 @@ class _FaceCaptureScreenState extends State<FaceCaptureScreen> {
                           ),
                         );
                       }
-                      final controller = _controller!;
-                      return Stack(
-                        children: [
-                          Positioned.fill(child: CameraPreview(controller)),
-                          Positioned.fill(
-                            child: Container(
-                              decoration: BoxDecoration(
-                                border: Border.all(
-                                  color: Colors.white.withAlpha(89),
+      final controller = _controller!;
+      return Stack(
+        children: [
+          Positioned.fill(child: CameraPreview(controller)),
+          Positioned.fill(
+            child: IgnorePointer(
+              child: Column(
+                children: [
+                  Container(
+                    padding: const EdgeInsets.fromLTRB(16, 14, 16, 10),
+                    decoration: BoxDecoration(
+                      color: Colors.black.withAlpha(102),
+                      borderRadius: const BorderRadius.only(
+                        bottomLeft: Radius.circular(18),
+                        bottomRight: Radius.circular(18),
+                      ),
+                    ),
+                    child: Row(
+                      children: [
+                        const Icon(Icons.center_focus_strong,
+                            color: Colors.white, size: 18),
+                        const SizedBox(width: 8),
+                        Expanded(
+                          child: Text(
+                            _tips[_tipIndex],
+                            style: Theme.of(context)
+                                .textTheme
+                                .bodySmall
+                                ?.copyWith(color: Colors.white),
+                          ),
+                        ),
+                        IconButton(
+                          onPressed: _advanceTip,
+                          icon: const Icon(Icons.tips_and_updates_outlined,
+                              color: Colors.white),
+                        ),
+                      ],
+                    ),
+                  ),
+                  const Spacer(),
+                ],
+              ),
+            ),
+          ),
+          Positioned.fill(
+            child: Container(
+              decoration: BoxDecoration(
+                border: Border.all(
+                  color: Colors.white.withAlpha(89),
                                   width: 2,
                                 ),
                               ),
@@ -513,11 +565,11 @@ class _FaceCaptureScreenState extends State<FaceCaptureScreen> {
                               ),
                             ),
                           ),
-                          Positioned(
-                            left: 16,
-                            right: 16,
-                            bottom: 16,
-                            child: Container(
+          Positioned(
+            left: 16,
+            right: 16,
+            bottom: 16,
+            child: Container(
                               padding: const EdgeInsets.symmetric(
                                 horizontal: 14,
                                 vertical: 10,
@@ -534,12 +586,51 @@ class _FaceCaptureScreenState extends State<FaceCaptureScreen> {
                                     ?.copyWith(color: Colors.white),
                                 textAlign: TextAlign.center,
                               ),
-                            ),
+            ),
+          ),
+          if (_isCapturing)
+            Positioned.fill(
+              child: Container(
+                color: Colors.black.withAlpha(120),
+                child: Center(
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 18,
+                      vertical: 14,
+                    ),
+                    decoration: BoxDecoration(
+                      color: const Color(0xFFF6F2ED),
+                      borderRadius: BorderRadius.circular(16),
+                    ),
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        const SizedBox(
+                          width: 28,
+                          height: 28,
+                          child: CircularProgressIndicator(
+                            strokeWidth: 3,
+                            color: Color(0xFF1C3B2E),
                           ),
-                        ],
-                      );
-                    },
+                        ),
+                        const SizedBox(height: 10),
+                        Text(
+                          'Detecting face...',
+                          style: Theme.of(context)
+                              .textTheme
+                              .bodyMedium
+                              ?.copyWith(color: const Color(0xFF1C3B2E)),
+                        ),
+                      ],
+                    ),
                   ),
+                ),
+              ),
+            ),
+        ],
+      );
+    },
+  ),
                 ),
               ),
             ),
@@ -608,6 +699,18 @@ class _FaceCaptureMacOSScreenState extends State<FaceCaptureMacOSScreen> {
   bool _cameraUnavailable = false;
   String? _cameraErrorMessage;
   int _cameraReloadToken = 0;
+  int _tipIndex = 0;
+  final List<String> _tips = const [
+    'Center your face in the oval',
+    'Keep your eyes open and look at the camera',
+    'Hold still for a sharp capture',
+  ];
+
+  void _advanceTip() {
+    setState(() {
+      _tipIndex = (_tipIndex + 1) % _tips.length;
+    });
+  }
 
   Future<void> _capture() async {
     if (_isCapturing || _controller == null) return;
@@ -754,6 +857,49 @@ class _FaceCaptureMacOSScreenState extends State<FaceCaptureMacOSScreen> {
                           });
                         },
                       ),
+                      Positioned.fill(
+                        child: IgnorePointer(
+                          child: Column(
+                            children: [
+                              Container(
+                                padding:
+                                    const EdgeInsets.fromLTRB(16, 14, 16, 10),
+                                decoration: BoxDecoration(
+                                  color: Colors.black.withAlpha(102),
+                                  borderRadius: const BorderRadius.only(
+                                    bottomLeft: Radius.circular(18),
+                                    bottomRight: Radius.circular(18),
+                                  ),
+                                ),
+                                child: Row(
+                                  children: [
+                                    const Icon(Icons.center_focus_strong,
+                                        color: Colors.white, size: 18),
+                                    const SizedBox(width: 8),
+                                    Expanded(
+                                      child: Text(
+                                        _tips[_tipIndex],
+                                        style: Theme.of(context)
+                                            .textTheme
+                                            .bodySmall
+                                            ?.copyWith(color: Colors.white),
+                                      ),
+                                    ),
+                                    IconButton(
+                                      onPressed: _advanceTip,
+                                      icon: const Icon(
+                                        Icons.tips_and_updates_outlined,
+                                        color: Colors.white,
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              ),
+                              const Spacer(),
+                            ],
+                          ),
+                        ),
+                      ),
                       if (_cameraUnavailable)
                         Positioned.fill(
                           child: Container(
@@ -787,6 +933,46 @@ class _FaceCaptureMacOSScreenState extends State<FaceCaptureMacOSScreen> {
                                     ],
                                   ),
                                 ],
+                              ),
+                            ),
+                          ),
+                        ),
+                      if (_isCapturing)
+                        Positioned.fill(
+                          child: Container(
+                            color: Colors.black.withAlpha(120),
+                            child: Center(
+                              child: Container(
+                                padding: const EdgeInsets.symmetric(
+                                  horizontal: 18,
+                                  vertical: 14,
+                                ),
+                                decoration: BoxDecoration(
+                                  color: const Color(0xFFF6F2ED),
+                                  borderRadius: BorderRadius.circular(16),
+                                ),
+                                child: Column(
+                                  mainAxisSize: MainAxisSize.min,
+                                  children: [
+                                    const SizedBox(
+                                      width: 28,
+                                      height: 28,
+                                      child: CircularProgressIndicator(
+                                        strokeWidth: 3,
+                                        color: Color(0xFF1C3B2E),
+                                      ),
+                                    ),
+                                    const SizedBox(height: 10),
+                                    Text(
+                                      'Detecting face...',
+                                      style: Theme.of(context)
+                                          .textTheme
+                                          .bodyMedium
+                                          ?.copyWith(
+                                              color: const Color(0xFF1C3B2E)),
+                                    ),
+                                  ],
+                                ),
                               ),
                             ),
                           ),
