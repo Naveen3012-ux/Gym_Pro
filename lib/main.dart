@@ -80,19 +80,19 @@ class GymProEntryScreen extends StatelessWidget {
   const GymProEntryScreen({super.key});
 
   static const List<_BusinessTile> _businessTiles = [
-    _BusinessTile('Restaurants', Icons.restaurant),
-    _BusinessTile('Clothing stores', Icons.checkroom),
-    _BusinessTile('Grocery stores', Icons.local_grocery_store),
-    _BusinessTile('Hardware stores', Icons.handyman),
-    _BusinessTile('Butcher shops (meat cutting)', Icons.set_meal),
-    _BusinessTile('Gyms', Icons.fitness_center),
-    _BusinessTile('Cafés or bakeries', Icons.coffee),
-    _BusinessTile('Electronics stores', Icons.devices_other),
-    _BusinessTile('Pharmacies', Icons.local_pharmacy),
-    _BusinessTile('Bookshops', Icons.menu_book),
-    _BusinessTile('Pet supply stores', Icons.pets),
-    _BusinessTile('Furniture stores', Icons.chair_alt),
-    _BusinessTile('Beauty salons (selling products)', Icons.spa),
+    _BusinessTile('Restaurants', Icons.restaurant, '🍽️'),
+    _BusinessTile('Clothing stores', Icons.checkroom, '👕'),
+    _BusinessTile('Grocery stores', Icons.local_grocery_store, '🛒'),
+    _BusinessTile('Hardware stores', Icons.handyman, '🛠️'),
+    _BusinessTile('Butcher shops (meat cutting)', Icons.set_meal, '🥩'),
+    _BusinessTile('Gyms', Icons.fitness_center, '🏋️'),
+    _BusinessTile('Cafés or bakeries', Icons.coffee, '☕'),
+    _BusinessTile('Electronics stores', Icons.devices_other, '💻'),
+    _BusinessTile('Pharmacies', Icons.local_pharmacy, '💊'),
+    _BusinessTile('Bookshops', Icons.menu_book, '📚'),
+    _BusinessTile('Pet supply stores', Icons.pets, '🐾'),
+    _BusinessTile('Furniture stores', Icons.chair_alt, '🪑'),
+    _BusinessTile('Beauty salons (selling products)', Icons.spa, '💇'),
   ];
 
   @override
@@ -178,10 +178,10 @@ class GymProEntryScreen extends StatelessWidget {
                                     color: const Color(0xFFE0A458),
                                     borderRadius: BorderRadius.circular(10),
                                   ),
-                                  child: Icon(
-                                    tile.icon,
-                                    color: const Color(0xFF1C3B2E),
-                                    size: 20,
+                                  alignment: Alignment.center,
+                                  child: Text(
+                                    tile.emoji,
+                                    style: const TextStyle(fontSize: 18),
                                   ),
                                 ),
                                 const SizedBox(height: 8),
@@ -212,10 +212,11 @@ class GymProEntryScreen extends StatelessWidget {
 }
 
 class _BusinessTile {
-  const _BusinessTile(this.label, this.icon);
+  const _BusinessTile(this.label, this.icon, this.emoji);
 
   final String label;
   final IconData icon;
+  final String emoji;
 }
 
 class EmptyBusinessScreen extends StatelessWidget {
