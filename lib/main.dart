@@ -10,7 +10,7 @@ import 'package:supabase_flutter/supabase_flutter.dart';
 import 'supabase_config.dart';
 
 bool useImagePickerForFaceCapture() {
-  return kIsWeb || defaultTargetPlatform == TargetPlatform.linux;
+  return defaultTargetPlatform == TargetPlatform.linux;
 }
 
 Future<void> main() async {
