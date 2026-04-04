@@ -1493,6 +1493,12 @@ class _DashboardScreenState extends State<DashboardScreen> {
                 ],
               ),
               const SizedBox(height: 16),
+              FaceIdCheckInCallout(
+                title: 'Face ID Check-In',
+                subtitle:
+                    'Open live Face ID and mark attendance in seconds.',
+              ),
+              const SizedBox(height: 16),
               Row(
                 children: [
                   Expanded(
@@ -1817,6 +1823,12 @@ class MemberDetailScreen extends StatelessWidget {
                 ),
               ],
             ),
+          ),
+          const SizedBox(height: 18),
+          FaceIdCheckInCallout(
+            title: 'Face ID Check-In',
+            subtitle:
+                'Use a live scan to log attendance for this member.',
           ),
           const SizedBox(height: 18),
           Container(
@@ -2251,6 +2263,12 @@ class _AddMemberScreenState extends State<AddMemberScreen> {
                         ?.copyWith(color: Colors.black54),
                   ),
                   const SizedBox(height: 10),
+                  FaceIdCheckInCallout(
+                    title: 'Face ID Check-In',
+                    subtitle:
+                        'Already registered? Use Face ID to mark attendance.',
+                  ),
+                  const SizedBox(height: 12),
                   if (_faceImageBytes != null)
                     ClipRRect(
                       borderRadius: BorderRadius.circular(14),
@@ -2597,6 +2615,13 @@ class _AttendanceInputScreenState extends State<AttendanceInputScreen> {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
+                    FaceIdCheckInCallout(
+                      title: 'Face ID Check-In',
+                      subtitle:
+                          'Use a live scan to identify members and log attendance.',
+                      showButton: false,
+                    ),
+                    const SizedBox(height: 20),
                     Text(
                       'Member',
                       style: Theme.of(context).textTheme.titleLarge,
@@ -2875,6 +2900,78 @@ class _LabeledField extends StatelessWidget {
           ),
         ),
       ],
+    );
+  }
+}
+
+class FaceIdCheckInCallout extends StatelessWidget {
+  const FaceIdCheckInCallout({
+    super.key,
+    required this.title,
+    required this.subtitle,
+    this.showButton = true,
+    this.buttonLabel = 'Open Face ID Check-In',
+    this.onPressed,
+  });
+
+  final String title;
+  final String subtitle;
+  final bool showButton;
+  final String buttonLabel;
+  final VoidCallback? onPressed;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: const Color(0xFFFFFBF6),
+        borderRadius: BorderRadius.circular(18),
+        border: Border.all(color: const Color(0xFFE5DED7)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            title,
+            style: Theme.of(context).textTheme.titleLarge,
+          ),
+          const SizedBox(height: 6),
+          Text(
+            subtitle,
+            style: Theme.of(context)
+                .textTheme
+                .bodyMedium
+                ?.copyWith(color: Colors.black54),
+          ),
+          if (showButton) ...[
+            const SizedBox(height: 12),
+            SizedBox(
+              width: double.infinity,
+              height: 48,
+              child: ElevatedButton.icon(
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: const Color(0xFF1C3B2E),
+                  foregroundColor: Colors.white,
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(14),
+                  ),
+                ),
+                onPressed: onPressed ??
+                    () {
+                      Navigator.of(context).push(
+                        MaterialPageRoute(
+                          builder: (_) => const AttendanceInputScreen(),
+                        ),
+                      );
+                    },
+                icon: const Icon(Icons.face_retouching_natural),
+                label: Text(buttonLabel),
+              ),
+            ),
+          ],
+        ],
+      ),
     );
   }
 }
