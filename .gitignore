@@ -32,10 +32,8 @@ flutter_*.log
 .flutter-plugins-dependencies
 .pub-cache/
 .pub/
-# Keep build outputs ignored, but allow web build for Pages deploy
+# Build outputs (Cloudflare Pages can build from source)
 /build/**
-!build/web/
-!build/web/**
 /coverage/
 
 # Symbolication related

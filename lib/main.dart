@@ -1,8 +1,17 @@
+import 'dart:convert';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
+import 'package:camera/camera.dart';
+import 'package:camera_macos/camera_macos.dart';
+import 'package:image_picker/image_picker.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
 import 'supabase_config.dart';
+
+bool useImagePickerForFaceCapture() {
+  return kIsWeb || defaultTargetPlatform == TargetPlatform.linux;
+}
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -114,6 +123,22 @@ class SupabaseService {
     });
   }
 
+  Future<String> addMemberReturningId(MemberInput input) async {
+    final row = await _client
+        .from('members')
+        .insert({
+          'name': input.name,
+          'email': input.email,
+          'age': input.age,
+          'payment_amount': input.paymentAmount,
+          'duration_months': input.durationMonths,
+          'membership_active': input.membershipActive,
+        })
+        .select('id')
+        .single();
+    return row['id'] as String;
+  }
+
   Future<void> addAttendance({
     required String memberId,
     required DateTime timestamp,
@@ -181,6 +206,69 @@ class SupabaseService {
       timestamp: DateTime.parse(row['timestamp'] as String),
     );
   }
+
+  Future<Member?> memberById(String memberId) async {
+    final rows = await _client
+        .from('members')
+        .select(
+          'id, name, email, age, payment_amount, duration_months, membership_active',
+        )
+        .eq('id', memberId)
+        .limit(1);
+    if (rows.isEmpty) return null;
+    final row = rows.first;
+    return Member(
+      id: row['id'] as String,
+      name: row['name'] as String,
+      email: row['email'] as String,
+      age: row['age'] as int,
+      paymentAmount: row['payment_amount'] as int,
+      durationMonths: row['duration_months'] as int,
+      membershipActive: row['membership_active'] as bool,
+    );
+  }
+
+  Future<FaceIdResult?> recognizeFace(Uint8List imageBytes) async {
+    final response = await _client.functions.invoke(
+      faceIdFunctionName,
+      body: <String, dynamic>{
+        'image_base64': base64Encode(imageBytes),
+      },
+    );
+
+    // Expected response: { "member_id": "...", "confidence": 0.92 }
+    final data = response.data;
+    if (data is Map<String, dynamic>) {
+      final memberId = data['member_id'];
+      if (memberId is String && memberId.isNotEmpty) {
+        final confidence = data['confidence'];
+        return FaceIdResult(
+          memberId: memberId,
+          confidence: confidence is num ? confidence.toDouble() : null,
+        );
+      }
+    }
+    return null;
+  }
+
+  Future<bool> enrollFace({
+    required String memberId,
+    required Uint8List imageBytes,
+  }) async {
+    final response = await _client.functions.invoke(
+      faceEnrollFunctionName,
+      body: <String, dynamic>{
+        'member_id': memberId,
+        'image_base64': base64Encode(imageBytes),
+      },
+    );
+    final data = response.data;
+    if (data is Map<String, dynamic>) {
+      final success = data['success'];
+      if (success is bool) return success;
+    }
+    return false;
+  }
 }
 
 class Member {
@@ -233,6 +321,581 @@ class AttendanceLog {
   final String memberId;
   final String memberName;
   final DateTime timestamp;
+}
+
+class FaceIdResult {
+  const FaceIdResult({
+    required this.memberId,
+    required this.confidence,
+  });
+
+  final String memberId;
+  final double? confidence;
+}
+
+class FaceCaptureScreen extends StatefulWidget {
+  const FaceCaptureScreen({
+    super.key,
+    required this.camera,
+    this.title = 'Capture Face ID',
+  });
+
+  final CameraDescription camera;
+  final String title;
+
+  @override
+  State<FaceCaptureScreen> createState() => _FaceCaptureScreenState();
+}
+
+class _FaceCaptureScreenState extends State<FaceCaptureScreen> {
+  CameraController? _controller;
+  Future<void>? _initializeControllerFuture;
+  bool _isCapturing = false;
+  String? _errorText;
+
+  @override
+  void initState() {
+    super.initState();
+    _setupCamera();
+  }
+
+  @override
+  void dispose() {
+    _controller?.dispose();
+    super.dispose();
+  }
+
+  void _setupCamera({bool notify = false}) {
+    _controller?.dispose();
+    final controller = CameraController(
+      widget.camera,
+      ResolutionPreset.medium,
+      enableAudio: false,
+    );
+    _controller = controller;
+    _initializeControllerFuture = controller.initialize();
+    if (notify && mounted) {
+      setState(() {});
+    }
+  }
+
+  Future<void> _capture() async {
+    if (_isCapturing) return;
+    final controller = _controller;
+    if (controller == null) {
+      setState(() {
+        _errorText = 'Camera not ready yet. Please try again.';
+      });
+      return;
+    }
+    setState(() {
+      _isCapturing = true;
+      _errorText = null;
+    });
+    try {
+      await _initializeControllerFuture;
+      if (!controller.value.isInitialized) {
+        setState(() {
+          _errorText = 'Camera not ready yet. Please try again.';
+        });
+        return;
+      }
+      final image = await controller.takePicture();
+      final bytes = await image.readAsBytes();
+      if (!mounted) return;
+      Navigator.of(context).pop(bytes);
+    } catch (error) {
+      setState(() {
+        _errorText = 'Camera capture failed: $error';
+      });
+    } finally {
+      if (mounted) {
+        setState(() => _isCapturing = false);
+      }
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final cameraFuture = _initializeControllerFuture;
+    return Scaffold(
+      appBar: AppBar(
+        backgroundColor: const Color(0xFFF6F2ED),
+        elevation: 0,
+        title: Text(widget.title),
+      ),
+      body: Column(
+        children: [
+          const SizedBox(height: 8),
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 20),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  'Align your face in the frame',
+                  style: Theme.of(context).textTheme.headlineMedium,
+                ),
+                const SizedBox(height: 6),
+                Text(
+                  'Make sure your face is well-lit and centered.',
+                  style: Theme.of(context)
+                      .textTheme
+                      .bodyMedium
+                      ?.copyWith(color: Colors.black54),
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(height: 16),
+          Expanded(
+            child: Padding(
+              padding: const EdgeInsets.all(20),
+              child: ClipRRect(
+                borderRadius: BorderRadius.circular(24),
+                child: Container(
+                  color: const Color(0xFFEFE8DF),
+                  child: FutureBuilder<void>(
+                    future: cameraFuture,
+                    builder: (context, snapshot) {
+                      if (snapshot.connectionState != ConnectionState.done) {
+                        return const Center(child: CircularProgressIndicator());
+                      }
+                      if (snapshot.hasError || _controller == null) {
+                        return Center(
+                          child: Column(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              Text(
+                                'Camera unavailable. Please check permissions.',
+                                style: Theme.of(context).textTheme.bodyMedium,
+                                textAlign: TextAlign.center,
+                              ),
+                              const SizedBox(height: 12),
+                              OutlinedButton.icon(
+                                onPressed: () => _setupCamera(notify: true),
+                                icon: const Icon(Icons.refresh),
+                                label: const Text('Retry Camera'),
+                              ),
+                            ],
+                          ),
+                        );
+                      }
+                      final controller = _controller!;
+                      return Stack(
+                        children: [
+                          Positioned.fill(child: CameraPreview(controller)),
+                          Positioned.fill(
+                            child: Container(
+                              decoration: BoxDecoration(
+                                border: Border.all(
+                                  color: Colors.white.withAlpha(89),
+                                  width: 2,
+                                ),
+                              ),
+                            ),
+                          ),
+                          Align(
+                            alignment: Alignment.center,
+                            child: Container(
+                              width: 220,
+                              height: 280,
+                              decoration: BoxDecoration(
+                                border: Border.all(
+                                  color: Colors.white.withAlpha(191),
+                                  width: 2.4,
+                                ),
+                                borderRadius: BorderRadius.circular(140),
+                              ),
+                            ),
+                          ),
+                          Positioned(
+                            left: 16,
+                            right: 16,
+                            bottom: 16,
+                            child: Container(
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 14,
+                                vertical: 10,
+                              ),
+                              decoration: BoxDecoration(
+                                color: Colors.black.withAlpha(102),
+                                borderRadius: BorderRadius.circular(14),
+                              ),
+                              child: Text(
+                                'Keep your eyes open and remove hats or masks.',
+                                style: Theme.of(context)
+                                    .textTheme
+                                    .bodySmall
+                                    ?.copyWith(color: Colors.white),
+                                textAlign: TextAlign.center,
+                              ),
+                            ),
+                          ),
+                        ],
+                      );
+                    },
+                  ),
+                ),
+              ),
+            ),
+          ),
+          if (_errorText != null)
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 20),
+              child: Text(
+                _errorText!,
+                style: Theme.of(context)
+                    .textTheme
+                    .bodySmall
+                    ?.copyWith(color: const Color(0xFF8A1B1B)),
+              ),
+            ),
+          Padding(
+            padding: const EdgeInsets.all(20),
+            child: SizedBox(
+              width: double.infinity,
+              height: 54,
+              child: ElevatedButton.icon(
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: const Color(0xFF1C3B2E),
+                  foregroundColor: Colors.white,
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(18),
+                  ),
+                ),
+                onPressed: _isCapturing ? null : _capture,
+                icon: _isCapturing
+                    ? const SizedBox(
+                        width: 18,
+                        height: 18,
+                        child: CircularProgressIndicator(
+                          strokeWidth: 2.2,
+                          color: Colors.white,
+                        ),
+                      )
+                    : const Icon(Icons.camera_alt),
+                label: Text(_isCapturing ? 'Capturing...' : 'Capture'),
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class FaceCaptureMacOSScreen extends StatefulWidget {
+  const FaceCaptureMacOSScreen({
+    super.key,
+    this.title = 'Capture Face ID',
+  });
+
+  final String title;
+
+  @override
+  State<FaceCaptureMacOSScreen> createState() => _FaceCaptureMacOSScreenState();
+}
+
+class _FaceCaptureMacOSScreenState extends State<FaceCaptureMacOSScreen> {
+  CameraMacOSController? _controller;
+  bool _isCapturing = false;
+  String? _errorText;
+  bool _cameraUnavailable = false;
+  String? _cameraErrorMessage;
+  int _cameraReloadToken = 0;
+
+  Future<void> _capture() async {
+    if (_isCapturing || _controller == null) return;
+    setState(() {
+      _isCapturing = true;
+      _errorText = null;
+    });
+    try {
+      final image = await _controller!.takePicture();
+      final bytes = image?.bytes;
+      if (!mounted) return;
+      if (bytes == null) {
+        setState(() {
+          _errorText = 'Camera capture failed. Please try again.';
+        });
+        return;
+      }
+      Navigator.of(context).pop(bytes);
+    } catch (error) {
+      setState(() {
+        _errorText = 'Camera capture failed: $error';
+      });
+    } finally {
+      if (mounted) {
+        setState(() => _isCapturing = false);
+      }
+    }
+  }
+
+  Future<void> _pickFromGallery() async {
+    if (_isCapturing) return;
+    setState(() {
+      _isCapturing = true;
+      _errorText = null;
+    });
+    try {
+      final imagePicker = ImagePicker();
+      final image = await imagePicker.pickImage(
+        source: ImageSource.gallery,
+        imageQuality: 85,
+      );
+      if (image == null) return;
+      final bytes = await image.readAsBytes();
+      if (!mounted) return;
+      Navigator.of(context).pop(bytes);
+    } catch (error) {
+      setState(() {
+        _errorText = 'Photo selection failed: $error';
+      });
+    } finally {
+      if (mounted) {
+        setState(() => _isCapturing = false);
+      }
+    }
+  }
+
+  void _retryCamera() {
+    setState(() {
+      _cameraUnavailable = false;
+      _cameraErrorMessage = null;
+      _cameraReloadToken += 1;
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(
+        backgroundColor: const Color(0xFFF6F2ED),
+        elevation: 0,
+        title: Text(widget.title),
+      ),
+      body: Column(
+        children: [
+          const SizedBox(height: 8),
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 20),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  'Align your face in the frame',
+                  style: Theme.of(context).textTheme.headlineMedium,
+                ),
+                const SizedBox(height: 6),
+                Text(
+                  'We will use this to match members during attendance.',
+                  style: Theme.of(context)
+                      .textTheme
+                      .bodyMedium
+                      ?.copyWith(color: Colors.black54),
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(height: 16),
+          Expanded(
+            child: Padding(
+              padding: const EdgeInsets.all(20),
+              child: ClipRRect(
+                borderRadius: BorderRadius.circular(24),
+                child: Container(
+                  color: const Color(0xFFEFE8DF),
+                  child: Stack(
+                    children: [
+                      CameraMacOSView(
+                        key: ValueKey(_cameraReloadToken),
+                        fit: BoxFit.cover,
+                        cameraMode: CameraMacOSMode.photo,
+                        enableAudio: false,
+                        onCameraLoading: (error) {
+                          if (error != null && !_cameraUnavailable) {
+                            WidgetsBinding.instance.addPostFrameCallback((_) {
+                              if (!mounted) return;
+                              setState(() {
+                                _cameraUnavailable = true;
+                                _cameraErrorMessage =
+                                    'Camera unavailable. Allow GymPro in System Settings > Privacy & Security > Camera.\n'
+                                    'Details: ${error.toString()}';
+                              });
+                            });
+                          }
+                          if (error != null) {
+                            debugPrint('CameraMacOS error: $error');
+                          }
+                          final message = error == null
+                              ? 'Starting camera...'
+                              : 'Camera unavailable. Check permissions.';
+                          return Center(
+                            child: Text(
+                              message,
+                              style: Theme.of(context)
+                                  .textTheme
+                                  .bodyMedium
+                                  ?.copyWith(color: Colors.black54),
+                            ),
+                          );
+                        },
+                        onCameraInizialized: (controller) {
+                          setState(() {
+                            _controller = controller;
+                            _cameraUnavailable = false;
+                            _cameraErrorMessage = null;
+                          });
+                        },
+                      ),
+                      if (_cameraUnavailable)
+                        Positioned.fill(
+                          child: Container(
+                            color: const Color(0xFFF6F2ED),
+                            child: Center(
+                              child: Column(
+                                mainAxisSize: MainAxisSize.min,
+                                children: [
+                                  Text(
+                                    _cameraErrorMessage ??
+                                        'Camera unavailable. Allow GymPro in System Settings > Privacy & Security > Camera.',
+                                    style:
+                                        Theme.of(context).textTheme.bodyMedium,
+                                    textAlign: TextAlign.center,
+                                  ),
+                                  const SizedBox(height: 12),
+                                  Wrap(
+                                    spacing: 12,
+                                    children: [
+                                      OutlinedButton.icon(
+                                        onPressed: _retryCamera,
+                                        icon: const Icon(Icons.refresh),
+                                        label: const Text('Retry Camera'),
+                                      ),
+                                      OutlinedButton.icon(
+                                        onPressed: _pickFromGallery,
+                                        icon:
+                                            const Icon(Icons.photo_library_outlined),
+                                        label: const Text('Select Photo'),
+                                      ),
+                                    ],
+                                  ),
+                                ],
+                              ),
+                            ),
+                          ),
+                        ),
+                      Align(
+                        alignment: Alignment.center,
+                        child: Container(
+                          width: 220,
+                          height: 280,
+                          decoration: BoxDecoration(
+                            border: Border.all(
+                              color: Colors.white.withAlpha(191),
+                              width: 2.4,
+                            ),
+                            borderRadius: BorderRadius.circular(140),
+                          ),
+                        ),
+                      ),
+                      Positioned(
+                        left: 16,
+                        right: 16,
+                        bottom: 16,
+                        child: Container(
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 14,
+                            vertical: 10,
+                          ),
+                          decoration: BoxDecoration(
+                            color: Colors.black.withAlpha(102),
+                            borderRadius: BorderRadius.circular(14),
+                          ),
+                          child: Text(
+                            'Stay still for a second to get a sharper shot.',
+                            style: Theme.of(context)
+                                .textTheme
+                                .bodySmall
+                                ?.copyWith(color: Colors.white),
+                            textAlign: TextAlign.center,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ),
+          ),
+          if (_errorText != null)
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 20),
+              child: Text(
+                _errorText!,
+                style: Theme.of(context)
+                    .textTheme
+                    .bodySmall
+                    ?.copyWith(color: const Color(0xFF8A1B1B)),
+              ),
+            ),
+          Padding(
+            padding: const EdgeInsets.all(20),
+            child: Row(
+              children: [
+                Expanded(
+                  child: SizedBox(
+                    height: 54,
+                    child: OutlinedButton.icon(
+                      style: OutlinedButton.styleFrom(
+                        foregroundColor: const Color(0xFF1C3B2E),
+                        side: const BorderSide(color: Color(0xFF1C3B2E)),
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(18),
+                        ),
+                      ),
+                      onPressed: _isCapturing ? null : _pickFromGallery,
+                      icon: const Icon(Icons.photo_library_outlined),
+                      label: const Text('Select Photo'),
+                    ),
+                  ),
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: SizedBox(
+                    height: 54,
+                    child: ElevatedButton.icon(
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: const Color(0xFF1C3B2E),
+                        foregroundColor: Colors.white,
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(18),
+                        ),
+                      ),
+                      onPressed: _isCapturing ? null : _capture,
+                      icon: _isCapturing
+                          ? const SizedBox(
+                              width: 18,
+                              height: 18,
+                              child: CircularProgressIndicator(
+                                strokeWidth: 2.2,
+                                color: Colors.white,
+                              ),
+                            )
+                          : const Icon(Icons.camera_alt),
+                      label: Text(_isCapturing ? 'Capturing...' : 'Capture'),
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
 }
 
 class LoginScreen extends StatefulWidget {
@@ -1237,6 +1900,12 @@ class _AddMemberScreenState extends State<AddMemberScreen> {
   final _customDaysController = TextEditingController();
   bool _membershipActive = true;
   bool _isSaving = false;
+  bool _isCapturingFace = false;
+  bool _isEnrollingFace = false;
+  bool _faceEnrolled = false;
+  Uint8List? _faceImageBytes;
+  String? _faceErrorText;
+  String? _createdMemberId;
   String? _errorText;
   int? _selectedDurationMonths;
   String? _durationErrorText;
@@ -1251,8 +1920,112 @@ class _AddMemberScreenState extends State<AddMemberScreen> {
     super.dispose();
   }
 
+  Future<void> _captureFace() async {
+    if (_isCapturingFace) return;
+    setState(() {
+      _isCapturingFace = true;
+      _faceErrorText = null;
+    });
+    try {
+      Uint8List? bytes;
+      if (useImagePickerForFaceCapture()) {
+        final imagePicker = ImagePicker();
+        final image = await imagePicker.pickImage(
+          source: ImageSource.gallery,
+          imageQuality: 85,
+        );
+        if (image == null) return;
+        bytes = await image.readAsBytes();
+      } else if (defaultTargetPlatform == TargetPlatform.macOS) {
+        if (!mounted) return;
+        bytes = await Navigator.of(context).push<Uint8List>(
+          MaterialPageRoute(
+            builder: (_) => const FaceCaptureMacOSScreen(),
+          ),
+        );
+        if (bytes == null) return;
+      } else {
+        final cameras = await availableCameras();
+        if (cameras.isEmpty) {
+          setState(() {
+            _faceErrorText = 'No camera found on this device.';
+          });
+          return;
+        }
+        final frontCamera = cameras.firstWhere(
+          (camera) => camera.lensDirection == CameraLensDirection.front,
+          orElse: () => cameras.first,
+        );
+        if (!mounted) return;
+        bytes = await Navigator.of(context).push<Uint8List>(
+          MaterialPageRoute(
+            builder: (_) => FaceCaptureScreen(camera: frontCamera),
+          ),
+        );
+        if (bytes == null) return;
+      }
+      setState(() {
+        _faceImageBytes = bytes;
+        _faceEnrolled = false;
+      });
+    } catch (error) {
+      setState(() {
+        _faceErrorText = 'Failed to capture face image: $error';
+      });
+    } finally {
+      if (mounted) {
+        setState(() => _isCapturingFace = false);
+      }
+    }
+  }
+
+  Future<bool> _enrollFace(String memberId) async {
+    if (_faceImageBytes == null) {
+      setState(() => _faceErrorText = 'Capture a face photo before saving.');
+      return false;
+    }
+    setState(() {
+      _isEnrollingFace = true;
+      _faceErrorText = null;
+    });
+    try {
+      final success = await SupabaseService().enrollFace(
+        memberId: memberId,
+        imageBytes: _faceImageBytes!,
+      );
+      if (!success) {
+        setState(() {
+          _faceErrorText = 'Face registration failed. Please try again.';
+        });
+        return false;
+      }
+      setState(() => _faceEnrolled = true);
+      return true;
+    } on PostgrestException catch (error) {
+      setState(() {
+        _faceErrorText = error.message;
+      });
+      return false;
+    } catch (_) {
+      setState(() {
+        _faceErrorText = 'Face registration failed. Please try again.';
+      });
+      return false;
+    } finally {
+      if (mounted) {
+        setState(() => _isEnrollingFace = false);
+      }
+    }
+  }
+
   Future<void> _saveMember() async {
     if (!_formKey.currentState!.validate()) return;
+    if (_faceImageBytes == null) {
+      setState(() {
+        _faceErrorText = 'Capture a face photo to complete registration.';
+      });
+      return;
+    }
     setState(() => _isSaving = true);
     final service = SupabaseService();
     try {
@@ -1280,16 +2053,22 @@ class _AddMemberScreenState extends State<AddMemberScreen> {
         return;
       }
 
-      await service.addMember(
-        MemberInput(
-          name: _nameController.text.trim(),
-          email: _emailController.text.trim(),
-          age: int.parse(_ageController.text.trim()),
-          paymentAmount: int.parse(_paymentController.text.trim()),
-          durationMonths: durationMonths!,
-          membershipActive: _membershipActive,
-        ),
-      );
+      final memberId = _createdMemberId ??
+          await service.addMemberReturningId(
+            MemberInput(
+              name: _nameController.text.trim(),
+              email: _emailController.text.trim(),
+              age: int.parse(_ageController.text.trim()),
+              paymentAmount: int.parse(_paymentController.text.trim()),
+              durationMonths: durationMonths!,
+              membershipActive: _membershipActive,
+            ),
+          );
+      _createdMemberId = memberId;
+
+      final enrolled = await _enrollFace(memberId);
+      if (!enrolled) return;
+
       if (mounted) {
         Navigator.of(context).pop();
       }
@@ -1453,6 +2232,82 @@ class _AddMemberScreenState extends State<AddMemberScreen> {
                     ),
                   ],
                   const SizedBox(height: 12),
+                  Text(
+                    'Face ID Registration',
+                    style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                          fontWeight: FontWeight.w600,
+                        ),
+                  ),
+                  const SizedBox(height: 6),
+                  Text(
+                    'Capture a face photo to link with this member profile.',
+                    style: Theme.of(context)
+                        .textTheme
+                        .bodySmall
+                        ?.copyWith(color: Colors.black54),
+                  ),
+                  const SizedBox(height: 10),
+                  if (_faceImageBytes != null)
+                    ClipRRect(
+                      borderRadius: BorderRadius.circular(14),
+                      child: Image.memory(
+                        _faceImageBytes!,
+                        height: 160,
+                        width: double.infinity,
+                        fit: BoxFit.cover,
+                      ),
+                    ),
+                  if (_faceImageBytes != null) const SizedBox(height: 10),
+                  SizedBox(
+                    width: double.infinity,
+                    height: 50,
+                    child: OutlinedButton.icon(
+                      style: OutlinedButton.styleFrom(
+                        foregroundColor: const Color(0xFF1C3B2E),
+                        side: const BorderSide(color: Color(0xFF1C3B2E)),
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(14),
+                        ),
+                      ),
+                      onPressed: _isCapturingFace ? null : _captureFace,
+                      icon: const Icon(Icons.face_retouching_natural),
+                      label: _isCapturingFace
+                          ? const SizedBox(
+                              width: 18,
+                              height: 18,
+                              child: CircularProgressIndicator(
+                                strokeWidth: 2.2,
+                                color: Color(0xFF1C3B2E),
+                              ),
+                            )
+                          : Text(_faceImageBytes == null
+                              ? (kIsWeb
+                                  ? 'Select Face ID Photo'
+                                  : 'Capture Face ID')
+                              : 'Retake Face ID'),
+                    ),
+                  ),
+                  if (_faceEnrolled) ...[
+                    const SizedBox(height: 8),
+                    Text(
+                      'Face ID linked successfully.',
+                      style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                            color: const Color(0xFF1C3B2E),
+                            fontWeight: FontWeight.w600,
+                          ),
+                    ),
+                  ],
+                  if (_faceErrorText != null) ...[
+                    const SizedBox(height: 8),
+                    Text(
+                      _faceErrorText!,
+                      style: Theme.of(context)
+                          .textTheme
+                          .bodySmall
+                          ?.copyWith(color: const Color(0xFF8A1B1B)),
+                    ),
+                  ],
+                  const SizedBox(height: 12),
                   SwitchListTile(
                     contentPadding: EdgeInsets.zero,
                     title: const Text('Membership Active'),
@@ -1483,7 +2338,7 @@ class _AddMemberScreenState extends State<AddMemberScreen> {
                           borderRadius: BorderRadius.circular(16),
                         ),
                       ),
-                      onPressed: _isSaving ? null : _saveMember,
+                      onPressed: _isSaving || _isEnrollingFace ? null : _saveMember,
                       child: _isSaving
                           ? const SizedBox(
                               width: 22,
@@ -1493,7 +2348,7 @@ class _AddMemberScreenState extends State<AddMemberScreen> {
                                 color: Colors.white,
                               ),
                             )
-                          : const Text('Save Member'),
+                          : const Text('Register Member'),
                     ),
                   ),
                 ],
@@ -1518,6 +2373,8 @@ class _AttendanceInputScreenState extends State<AttendanceInputScreen> {
   DateTime _selectedDate = DateTime.now();
   TimeOfDay _selectedTime = TimeOfDay.now();
   bool _isSaving = false;
+  bool _isRecognizing = false;
+  final ImagePicker _imagePicker = ImagePicker();
 
   Future<void> _pickDate() async {
     final picked = await showDatePicker(
@@ -1604,6 +2461,109 @@ class _AttendanceInputScreenState extends State<AttendanceInputScreen> {
     } finally {
       if (mounted) {
         setState(() => _isSaving = false);
+      }
+    }
+  }
+
+  bool _isSameDay(DateTime a, DateTime b) {
+    return a.year == b.year && a.month == b.month && a.day == b.day;
+  }
+
+  Future<String> _resolvePunchAction(
+    String memberId,
+    DateTime timestamp,
+  ) async {
+    final recent = await SupabaseService().attendanceForMember(memberId);
+    final todayCount = recent.where((log) => _isSameDay(log.timestamp, timestamp));
+    return todayCount.length.isEven ? 'Punch in' : 'Punch out';
+  }
+
+  Future<void> _submitFaceId() async {
+    if (_isRecognizing) return;
+    setState(() => _isRecognizing = true);
+    final service = SupabaseService();
+    try {
+      Uint8List? bytes;
+      if (useImagePickerForFaceCapture()) {
+        final image = await _imagePicker.pickImage(
+          source: ImageSource.gallery,
+          imageQuality: 85,
+        );
+        if (image == null) return;
+        bytes = await image.readAsBytes();
+      } else if (defaultTargetPlatform == TargetPlatform.macOS) {
+        if (!mounted) return;
+        bytes = await Navigator.of(context).push<Uint8List>(
+          MaterialPageRoute(
+            builder: (_) => const FaceCaptureMacOSScreen(
+              title: 'Capture Face ID',
+            ),
+          ),
+        );
+        if (bytes == null) return;
+      } else {
+        final cameras = await availableCameras();
+        if (cameras.isEmpty) {
+          if (mounted) {
+            ScaffoldMessenger.of(context).showSnackBar(
+              const SnackBar(content: Text('No camera found on this device.')),
+            );
+          }
+          return;
+        }
+        final frontCamera = cameras.firstWhere(
+          (camera) => camera.lensDirection == CameraLensDirection.front,
+          orElse: () => cameras.first,
+        );
+        if (!mounted) return;
+        bytes = await Navigator.of(context).push<Uint8List>(
+          MaterialPageRoute(
+            builder: (_) => FaceCaptureScreen(camera: frontCamera),
+          ),
+        );
+        if (bytes == null) return;
+      }
+      final result = await service.recognizeFace(bytes);
+      if (result == null) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('No matching member found.')),
+          );
+        }
+        return;
+      }
+
+      final timestamp = DateTime.now();
+      final action = await _resolvePunchAction(result.memberId, timestamp);
+      await service.addAttendance(
+        memberId: result.memberId,
+        timestamp: timestamp,
+      );
+      final member = await service.memberById(result.memberId);
+      final name = member?.name ?? 'Member';
+      final confidence = result.confidence == null
+          ? ''
+          : ' (${(result.confidence! * 100).toStringAsFixed(1)}% match)';
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('$action recorded for $name$confidence.')),
+        );
+      }
+    } on PostgrestException catch (error) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text(error.message)),
+        );
+      }
+    } catch (error) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Face ID capture failed: $error')),
+        );
+      }
+    } finally {
+      if (mounted) {
+        setState(() => _isRecognizing = false);
       }
     }
   }
@@ -1725,6 +2685,46 @@ class _AttendanceInputScreenState extends State<AttendanceInputScreen> {
                         onPressed: _isSaving ? null : _submitBiometric,
                         icon: const Icon(Icons.fingerprint),
                         label: const Text('Capture Biometric Timestamp'),
+                      ),
+                    ),
+                    const SizedBox(height: 22),
+                    Text(
+                      'Face ID Attendance',
+                      style: Theme.of(context).textTheme.titleLarge,
+                    ),
+                    const SizedBox(height: 8),
+                    Text(
+                      'Use the front camera to identify the member and log punch-in/out automatically.',
+                      style: Theme.of(context)
+                          .textTheme
+                          .bodyMedium
+                          ?.copyWith(color: Colors.black54),
+                    ),
+                    const SizedBox(height: 14),
+                    SizedBox(
+                      width: double.infinity,
+                      height: 50,
+                      child: OutlinedButton.icon(
+                        style: OutlinedButton.styleFrom(
+                          foregroundColor: const Color(0xFF1C3B2E),
+                          side: const BorderSide(color: Color(0xFF1C3B2E)),
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(14),
+                          ),
+                        ),
+                        onPressed:
+                            _isRecognizing || _isSaving ? null : _submitFaceId,
+                        icon: const Icon(Icons.face_retouching_natural),
+                        label: _isRecognizing
+                            ? const SizedBox(
+                                width: 18,
+                                height: 18,
+                                child: CircularProgressIndicator(
+                                  strokeWidth: 2.2,
+                                  color: Color(0xFF1C3B2E),
+                                ),
+                              )
+                            : const Text('Capture Face ID'),
                       ),
                     ),
                   ],

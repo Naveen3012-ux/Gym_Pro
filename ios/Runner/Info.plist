@@ -4,6 +4,8 @@
 <dict>
 	<key>CFBundleDevelopmentRegion</key>
 	<string>$(DEVELOPMENT_LANGUAGE)</string>
+	<key>NSCameraUsageDescription</key>
+	<string>Gym Pro uses the camera to capture Face ID attendance.</string>
 	<key>CFBundleDisplayName</key>
 	<string>Gym Pro</string>
 	<key>CFBundleExecutable</key>
