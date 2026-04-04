@@ -2,6 +2,7 @@ import 'dart:convert';
 import 'dart:math';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:intl/intl.dart';
 import 'package:camera/camera.dart';
 import 'package:camera_macos/camera_macos.dart';
@@ -16,11 +17,18 @@ bool useImagePickerForFaceCapture() {
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
+  await _loadMaterialIconsFont();
   await Supabase.initialize(
     url: supabaseUrl,
     anonKey: supabaseAnonKey,
   );
   runApp(const GymProApp());
+}
+
+Future<void> _loadMaterialIconsFont() async {
+  final loader = FontLoader('MaterialIcons');
+  loader.addFont(rootBundle.load('fonts/MaterialIcons-Regular.otf'));
+  await loader.load();
 }
 
 class GymProApp extends StatelessWidget {
