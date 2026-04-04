@@ -139,6 +139,26 @@ class SupabaseService {
     return row['id'] as String;
   }
 
+  Future<void> updateMember({
+    required String memberId,
+    required MemberInput input,
+  }) async {
+    await _client.from('members').update({
+      'name': input.name,
+      'email': input.email,
+      'age': input.age,
+      'payment_amount': input.paymentAmount,
+      'duration_months': input.durationMonths,
+      'membership_active': input.membershipActive,
+    }).eq('id', memberId);
+  }
+
+  Future<void> deleteMember(String memberId) async {
+    await _client.from('attendance').delete().eq('member_id', memberId);
+    await _client.from('member_faces').delete().eq('member_id', memberId);
+    await _client.from('members').delete().eq('id', memberId);
+  }
+
   Future<void> addAttendance({
     required String memberId,
     required DateTime timestamp,
@@ -147,6 +167,19 @@ class SupabaseService {
       'member_id': memberId,
       'timestamp': timestamp.toUtc().toIso8601String(),
     });
+  }
+
+  Future<void> updateAttendance({
+    required String attendanceId,
+    required DateTime timestamp,
+  }) async {
+    await _client.from('attendance').update({
+      'timestamp': timestamp.toUtc().toIso8601String(),
+    }).eq('id', attendanceId);
+  }
+
+  Future<void> deleteAttendance(String attendanceId) async {
+    await _client.from('attendance').delete().eq('id', attendanceId);
   }
 
   Future<List<AttendanceLog>> attendanceForMember(String memberId) async {
@@ -335,6 +368,61 @@ class FaceIdResult {
 
   final String memberId;
   final double? confidence;
+}
+
+Future<bool> confirmDestructiveAction(
+  BuildContext context, {
+  required String title,
+  required String message,
+  String confirmLabel = 'Delete',
+}) async {
+  final result = await showDialog<bool>(
+    context: context,
+    builder: (context) => AlertDialog(
+      title: Text(title),
+      content: Text(message),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.of(context).pop(false),
+          child: const Text('Cancel'),
+        ),
+        ElevatedButton(
+          style: ElevatedButton.styleFrom(
+            backgroundColor: const Color(0xFF8A1B1B),
+            foregroundColor: Colors.white,
+          ),
+          onPressed: () => Navigator.of(context).pop(true),
+          child: Text(confirmLabel),
+        ),
+      ],
+    ),
+  );
+  return result ?? false;
+}
+
+Future<DateTime?> pickDateTime(
+  BuildContext context, {
+  required DateTime initial,
+}) async {
+  final pickedDate = await showDatePicker(
+    context: context,
+    initialDate: initial,
+    firstDate: DateTime(2022),
+    lastDate: DateTime.now().add(const Duration(days: 365)),
+  );
+  if (pickedDate == null) return null;
+  final pickedTime = await showTimePicker(
+    context: context,
+    initialTime: TimeOfDay.fromDateTime(initial),
+  );
+  if (pickedTime == null) return null;
+  return DateTime(
+    pickedDate.year,
+    pickedDate.month,
+    pickedDate.day,
+    pickedTime.hour,
+    pickedTime.minute,
+  );
 }
 
 class FaceCaptureScreen extends StatefulWidget {
@@ -1602,6 +1690,28 @@ class _DashboardScreenState extends State<DashboardScreen> {
             0,
             (sum, member) => sum + member.paymentAmount,
           );
+          Future<void> editLog(AttendanceLog log) async {
+            final updated = await pickDateTime(
+              context,
+              initial: log.timestamp.toLocal(),
+            );
+            if (updated == null) return;
+            await service.updateAttendance(
+              attendanceId: log.id,
+              timestamp: updated,
+            );
+          }
+
+          Future<void> deleteLog(AttendanceLog log) async {
+            final confirmed = await confirmDestructiveAction(
+              context,
+              title: 'Delete attendance?',
+              message: 'This will remove the attendance record.',
+              confirmLabel: 'Delete',
+            );
+            if (!confirmed) return;
+            await service.deleteAttendance(log.id);
+          }
           return ListView(
             padding: const EdgeInsets.fromLTRB(20, 10, 20, 30),
             children: [
@@ -1881,6 +1991,24 @@ class _DashboardScreenState extends State<DashboardScreen> {
                         ),
                       );
                     },
+                    onEdit: () async {
+                      await Navigator.of(context).push(
+                        MaterialPageRoute(
+                          builder: (_) => EditMemberScreen(member: member),
+                        ),
+                      );
+                    },
+                    onDelete: () async {
+                      final confirmed = await confirmDestructiveAction(
+                        context,
+                        title: 'Delete member?',
+                        message:
+                            'This will remove the member, their attendance records, and face ID data. This action cannot be undone.',
+                        confirmLabel: 'Delete Member',
+                      );
+                      if (!confirmed) return;
+                      await SupabaseService().deleteMember(member.id);
+                    },
                   ),
                 ),
               const SizedBox(height: 20),
@@ -1913,7 +2041,11 @@ class _DashboardScreenState extends State<DashboardScreen> {
                         ),
                       )
                       .toList();
-                  return _AttendanceLogCard(logs: resolvedLogs);
+                  return _AttendanceLogCard(
+                    logs: resolvedLogs,
+                    onEdit: editLog,
+                    onDelete: deleteLog,
+                  );
                 },
               ),
             ],
@@ -1935,10 +2067,67 @@ class _DashboardScreenState extends State<DashboardScreen> {
   }
 }
 
-class MemberDetailScreen extends StatelessWidget {
+class MemberDetailScreen extends StatefulWidget {
   const MemberDetailScreen({super.key, required this.member});
 
   final Member member;
+
+  @override
+  State<MemberDetailScreen> createState() => _MemberDetailScreenState();
+}
+
+class _MemberDetailScreenState extends State<MemberDetailScreen> {
+  late Member _member;
+
+  @override
+  void initState() {
+    super.initState();
+    _member = widget.member;
+  }
+
+  Future<void> _refreshMember() async {
+    final updated = await SupabaseService().memberById(widget.member.id);
+    if (updated != null && mounted) {
+      setState(() => _member = updated);
+    }
+  }
+
+  Future<void> _openEdit() async {
+    final result = await Navigator.of(context).push<bool>(
+      MaterialPageRoute(
+        builder: (_) => EditMemberScreen(member: _member),
+      ),
+    );
+    if (result == true) {
+      await _refreshMember();
+    }
+  }
+
+  Future<void> _deleteMember() async {
+    final confirmed = await confirmDestructiveAction(
+      context,
+      title: 'Delete member?',
+      message:
+          'This will remove the member, their attendance records, and face ID data. This action cannot be undone.',
+      confirmLabel: 'Delete Member',
+    );
+    if (!confirmed) return;
+    try {
+      await SupabaseService().deleteMember(_member.id);
+      if (mounted) Navigator.of(context).pop();
+    } on PostgrestException catch (error) {
+      if (mounted) {
+        ScaffoldMessenger.of(context)
+            .showSnackBar(SnackBar(content: Text(error.message)));
+      }
+    } catch (_) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Failed to delete member.')),
+        );
+      }
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -1948,6 +2137,16 @@ class MemberDetailScreen extends StatelessWidget {
         backgroundColor: const Color(0xFFF6F2ED),
         elevation: 0,
         title: const Text('Member Details'),
+        actions: [
+          IconButton(
+            onPressed: _openEdit,
+            icon: const Icon(Icons.edit_outlined),
+          ),
+          IconButton(
+            onPressed: _deleteMember,
+            icon: const Icon(Icons.delete_outline),
+          ),
+        ],
       ),
       body: ListView(
         padding: const EdgeInsets.all(20),
@@ -1969,19 +2168,19 @@ class MemberDetailScreen extends StatelessWidget {
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Text(
-                  member.name,
+                  _member.name,
                   style: Theme.of(context).textTheme.headlineMedium,
                 ),
                 const SizedBox(height: 8),
-                _DetailRow(label: 'Email', value: member.email),
-                _DetailRow(label: 'Age', value: '${member.age} years'),
+                _DetailRow(label: 'Email', value: _member.email),
+                _DetailRow(label: 'Age', value: '${_member.age} years'),
                 _DetailRow(
                   label: 'Payment Amount',
-                  value: '₹${member.paymentAmount}',
+                  value: '₹${_member.paymentAmount}',
                 ),
                 _DetailRow(
                   label: 'Duration',
-                  value: '${member.durationMonths} months',
+                  value: '${_member.durationMonths} months',
                 ),
                 const SizedBox(height: 16),
                 Container(
@@ -1990,17 +2189,17 @@ class MemberDetailScreen extends StatelessWidget {
                     vertical: 8,
                   ),
                   decoration: BoxDecoration(
-                    color: member.membershipActive
+                    color: _member.membershipActive
                         ? const Color(0xFFDFF1E5)
                         : const Color(0xFFF9DADA),
                     borderRadius: BorderRadius.circular(12),
                   ),
                   child: Text(
-                    member.membershipActive
+                    _member.membershipActive
                         ? 'Membership Active'
                         : 'Payment Pending',
                     style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                          color: member.membershipActive
+                          color: _member.membershipActive
                               ? const Color(0xFF1C3B2E)
                               : const Color(0xFF8A1B1B),
                           fontWeight: FontWeight.w600,
@@ -2032,7 +2231,7 @@ class MemberDetailScreen extends StatelessWidget {
                 ),
                 const SizedBox(height: 10),
                 FutureBuilder<List<AttendanceLog>>(
-                  future: service.attendanceForMember(member.id),
+                  future: service.attendanceForMember(_member.id),
                   builder: (context, snapshot) {
                     if (snapshot.connectionState == ConnectionState.waiting) {
                       return const Center(
@@ -2068,6 +2267,49 @@ class MemberDetailScreen extends StatelessWidget {
                                           .format(log.timestamp.toLocal()),
                                       style: Theme.of(context).textTheme.bodyMedium,
                                     ),
+                                  ),
+                                  PopupMenuButton<String>(
+                                    onSelected: (value) async {
+                                      if (value == 'edit') {
+                                        final updated = await pickDateTime(
+                                          context,
+                                          initial: log.timestamp.toLocal(),
+                                        );
+                                        if (updated == null) return;
+                                        await SupabaseService().updateAttendance(
+                                          attendanceId: log.id,
+                                          timestamp: updated,
+                                        );
+                                        if (mounted) {
+                                          setState(() {});
+                                        }
+                                      } else if (value == 'delete') {
+                                        final confirmed =
+                                            await confirmDestructiveAction(
+                                          context,
+                                          title: 'Delete attendance?',
+                                          message:
+                                              'This will remove the attendance record.',
+                                          confirmLabel: 'Delete',
+                                        );
+                                        if (!confirmed) return;
+                                        await SupabaseService()
+                                            .deleteAttendance(log.id);
+                                        if (mounted) {
+                                          setState(() {});
+                                        }
+                                      }
+                                    },
+                                    itemBuilder: (context) => [
+                                      const PopupMenuItem(
+                                        value: 'edit',
+                                        child: Text('Edit time'),
+                                      ),
+                                      const PopupMenuItem(
+                                        value: 'delete',
+                                        child: Text('Delete'),
+                                      ),
+                                    ],
                                   ),
                                 ],
                               ),
@@ -2564,6 +2806,245 @@ class _AddMemberScreenState extends State<AddMemberScreen> {
             ),
           ),
         ],
+      ),
+    );
+  }
+}
+
+class EditMemberScreen extends StatefulWidget {
+  const EditMemberScreen({super.key, required this.member});
+
+  final Member member;
+
+  @override
+  State<EditMemberScreen> createState() => _EditMemberScreenState();
+}
+
+class _EditMemberScreenState extends State<EditMemberScreen> {
+  final _formKey = GlobalKey<FormState>();
+  late final TextEditingController _nameController;
+  late final TextEditingController _emailController;
+  late final TextEditingController _ageController;
+  late final TextEditingController _paymentController;
+  late final TextEditingController _durationController;
+  bool _membershipActive = true;
+  bool _isSaving = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _nameController = TextEditingController(text: widget.member.name);
+    _emailController = TextEditingController(text: widget.member.email);
+    _ageController =
+        TextEditingController(text: widget.member.age.toString());
+    _paymentController =
+        TextEditingController(text: widget.member.paymentAmount.toString());
+    _durationController =
+        TextEditingController(text: widget.member.durationMonths.toString());
+    _membershipActive = widget.member.membershipActive;
+  }
+
+  @override
+  void dispose() {
+    _nameController.dispose();
+    _emailController.dispose();
+    _ageController.dispose();
+    _paymentController.dispose();
+    _durationController.dispose();
+    super.dispose();
+  }
+
+  Future<void> _save() async {
+    if (!_formKey.currentState!.validate()) return;
+    setState(() => _isSaving = true);
+    try {
+      await SupabaseService().updateMember(
+        memberId: widget.member.id,
+        input: MemberInput(
+          name: _nameController.text.trim(),
+          email: _emailController.text.trim(),
+          age: int.parse(_ageController.text.trim()),
+          paymentAmount: int.parse(_paymentController.text.trim()),
+          durationMonths: int.parse(_durationController.text.trim()),
+          membershipActive: _membershipActive,
+        ),
+      );
+      if (mounted) {
+        Navigator.of(context).pop(true);
+      }
+    } on PostgrestException catch (error) {
+      if (mounted) {
+        ScaffoldMessenger.of(context)
+            .showSnackBar(SnackBar(content: Text(error.message)));
+      }
+    } catch (_) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Failed to update member.')),
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _isSaving = false);
+    }
+  }
+
+  Future<void> _deleteMember() async {
+    final confirmed = await confirmDestructiveAction(
+      context,
+      title: 'Delete member?',
+      message:
+          'This will remove the member, their attendance records, and face ID data. This action cannot be undone.',
+      confirmLabel: 'Delete Member',
+    );
+    if (!confirmed) return;
+    setState(() => _isSaving = true);
+    try {
+      await SupabaseService().deleteMember(widget.member.id);
+      if (mounted) {
+        Navigator.of(context).pop(true);
+      }
+    } on PostgrestException catch (error) {
+      if (mounted) {
+        ScaffoldMessenger.of(context)
+            .showSnackBar(SnackBar(content: Text(error.message)));
+      }
+    } catch (_) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Failed to delete member.')),
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _isSaving = false);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(
+        backgroundColor: const Color(0xFFF6F2ED),
+        elevation: 0,
+        title: const Text('Edit Member'),
+      ),
+      body: Form(
+        key: _formKey,
+        child: ListView(
+          padding: const EdgeInsets.all(20),
+          children: [
+            Container(
+              padding: const EdgeInsets.all(20),
+              decoration: BoxDecoration(
+                color: const Color(0xFFFFFBF6),
+                borderRadius: BorderRadius.circular(24),
+              ),
+              child: Column(
+                children: [
+                  _LabeledFormField(
+                    label: 'Name',
+                    controller: _nameController,
+                    validator: (value) =>
+                        value == null || value.trim().isEmpty
+                            ? 'Enter a name'
+                            : null,
+                    keyboardType: TextInputType.name,
+                  ),
+                  const SizedBox(height: 14),
+                  _LabeledFormField(
+                    label: 'Email',
+                    controller: _emailController,
+                    validator: (value) =>
+                        value == null || value.trim().isEmpty
+                            ? 'Enter an email'
+                            : null,
+                    keyboardType: TextInputType.emailAddress,
+                  ),
+                  const SizedBox(height: 14),
+                  _LabeledFormField(
+                    label: 'Age',
+                    controller: _ageController,
+                    validator: (value) =>
+                        value == null || int.tryParse(value) == null
+                            ? 'Enter a valid age'
+                            : null,
+                    keyboardType: TextInputType.number,
+                  ),
+                  const SizedBox(height: 14),
+                  _LabeledFormField(
+                    label: 'Payment Amount',
+                    controller: _paymentController,
+                    validator: (value) =>
+                        value == null || int.tryParse(value) == null
+                            ? 'Enter a valid amount'
+                            : null,
+                    keyboardType: TextInputType.number,
+                  ),
+                  const SizedBox(height: 14),
+                  _LabeledFormField(
+                    label: 'Duration (months)',
+                    controller: _durationController,
+                    validator: (value) =>
+                        value == null || int.tryParse(value) == null
+                            ? 'Enter a valid duration'
+                            : null,
+                    keyboardType: TextInputType.number,
+                  ),
+                  const SizedBox(height: 10),
+                  SwitchListTile(
+                    contentPadding: EdgeInsets.zero,
+                    title: const Text('Membership Active'),
+                    value: _membershipActive,
+                    onChanged: (value) {
+                      setState(() => _membershipActive = value);
+                    },
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(height: 20),
+            SizedBox(
+              width: double.infinity,
+              height: 52,
+              child: ElevatedButton(
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: const Color(0xFF1C3B2E),
+                  foregroundColor: Colors.white,
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(16),
+                  ),
+                ),
+                onPressed: _isSaving ? null : _save,
+                child: _isSaving
+                    ? const SizedBox(
+                        width: 22,
+                        height: 22,
+                        child: CircularProgressIndicator(
+                          strokeWidth: 2.4,
+                          color: Colors.white,
+                        ),
+                      )
+                    : const Text('Save Changes'),
+              ),
+            ),
+            const SizedBox(height: 12),
+            SizedBox(
+              width: double.infinity,
+              height: 48,
+              child: OutlinedButton.icon(
+                style: OutlinedButton.styleFrom(
+                  foregroundColor: const Color(0xFF8A1B1B),
+                  side: const BorderSide(color: Color(0xFF8A1B1B)),
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(16),
+                  ),
+                ),
+                onPressed: _isSaving ? null : _deleteMember,
+                icon: const Icon(Icons.delete_outline),
+                label: const Text('Delete Member'),
+              ),
+            ),
+          ],
+        ),
       ),
     );
   }
@@ -3202,10 +3683,17 @@ class _StatCard extends StatelessWidget {
 }
 
 class _MemberTile extends StatelessWidget {
-  const _MemberTile({required this.member, required this.onTap});
+  const _MemberTile({
+    required this.member,
+    required this.onTap,
+    required this.onEdit,
+    required this.onDelete,
+  });
 
   final Member member;
   final VoidCallback onTap;
+  final VoidCallback onEdit;
+  final VoidCallback onDelete;
 
   @override
   Widget build(BuildContext context) {
@@ -3288,6 +3776,19 @@ class _MemberTile extends StatelessWidget {
                         ),
                   ),
                 ),
+                PopupMenuButton<String>(
+                  onSelected: (value) {
+                    if (value == 'edit') {
+                      onEdit();
+                    } else if (value == 'delete') {
+                      onDelete();
+                    }
+                  },
+                  itemBuilder: (context) => const [
+                    PopupMenuItem(value: 'edit', child: Text('Edit')),
+                    PopupMenuItem(value: 'delete', child: Text('Delete')),
+                  ],
+                ),
               ],
             ),
           ],
@@ -3298,9 +3799,15 @@ class _MemberTile extends StatelessWidget {
 }
 
 class _AttendanceLogCard extends StatelessWidget {
-  const _AttendanceLogCard({required this.logs});
+  const _AttendanceLogCard({
+    required this.logs,
+    this.onEdit,
+    this.onDelete,
+  });
 
   final List<AttendanceLog> logs;
+  final Future<void> Function(AttendanceLog log)? onEdit;
+  final Future<void> Function(AttendanceLog log)? onDelete;
 
   @override
   Widget build(BuildContext context) {
@@ -3322,9 +3829,38 @@ class _AttendanceLogCard extends StatelessWidget {
             .map(
               (log) => Column(
                 children: [
-                  _AttendanceRow(
-                    name: log.memberName,
-                    time: DateFormat('h:mm a').format(log.timestamp.toLocal()),
+                  Row(
+                    children: [
+                      Expanded(
+                        child: _AttendanceRow(
+                          name: log.memberName,
+                          time: DateFormat('h:mm a')
+                              .format(log.timestamp.toLocal()),
+                        ),
+                      ),
+                      if (onEdit != null || onDelete != null)
+                        PopupMenuButton<String>(
+                          onSelected: (value) async {
+                            if (value == 'edit' && onEdit != null) {
+                              await onEdit!(log);
+                            } else if (value == 'delete' && onDelete != null) {
+                              await onDelete!(log);
+                            }
+                          },
+                          itemBuilder: (context) => [
+                            if (onEdit != null)
+                              const PopupMenuItem(
+                                value: 'edit',
+                                child: Text('Edit time'),
+                              ),
+                            if (onDelete != null)
+                              const PopupMenuItem(
+                                value: 'delete',
+                                child: Text('Delete'),
+                              ),
+                          ],
+                        ),
+                    ],
                   ),
                   if (log != logs.last) const Divider(height: 22),
                 ],

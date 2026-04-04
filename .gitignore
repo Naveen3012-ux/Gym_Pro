@@ -13,6 +13,7 @@
 migrate_working_dir/
 .tmp/
 flutter_*.log
+supabase/.temp/
 
 # IntelliJ related
 *.iml
