@@ -4,11 +4,23 @@
 /flutter_bootstrap.js
   Cache-Control: no-cache
 
+/flutter_service_worker.js
+  Cache-Control: no-cache
+
 /main.dart.js
   Cache-Control: no-cache
 
 /manifest.json
   Cache-Control: no-cache
 
+/assets/AssetManifest.json
+  Cache-Control: no-cache
+
+/assets/FontManifest.json
+  Cache-Control: no-cache
+
+/assets/NOTICES
+  Cache-Control: no-cache
+
 /assets/*
-  Cache-Control: public, max-age=31536000, immutable
+  Cache-Control: public, max-age=3600
