@@ -265,9 +265,13 @@ class SupabaseService {
     final data = response.data;
     if (data is Map<String, dynamic>) {
       final success = data['success'];
-      if (success is bool) return success;
+      if (success is bool && success) return true;
+      final error = data['error'];
+      if (error != null) {
+        throw Exception(error.toString());
+      }
     }
-    return false;
+    throw Exception('Face registration failed. Please try again.');
   }
 }
 
@@ -2006,9 +2010,9 @@ class _AddMemberScreenState extends State<AddMemberScreen> {
         _faceErrorText = error.message;
       });
       return false;
-    } catch (_) {
+    } catch (error) {
       setState(() {
-        _faceErrorText = 'Face registration failed. Please try again.';
+        _faceErrorText = 'Face registration failed: $error';
       });
       return false;
     } finally {
