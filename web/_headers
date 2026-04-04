@@ -22,5 +22,8 @@
 /assets/NOTICES
   Cache-Control: no-cache
 
+/assets/fonts/*
+  Cache-Control: no-cache
+
 /assets/*
   Cache-Control: public, max-age=3600
